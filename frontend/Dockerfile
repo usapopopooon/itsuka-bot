@@ -2,8 +2,10 @@ FROM node:24-alpine
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm ci || npm install
+# .npmrc を package*.json と一緒に先にコピーする (legacy-peer-deps=true 等の
+# 設定が npm ci で効くようにする)。
+COPY package.json package-lock.json* .npmrc ./
+RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
 COPY . .
 
