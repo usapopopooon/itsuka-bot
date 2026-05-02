@@ -36,9 +36,7 @@ async def api_login(body: _LoginRequest, request: Request) -> JSONResponse:
 
     if not _security.verify_admin_credentials(user, password):
         _security.record_failed_attempt(client_ip)
-        return JSONResponse(
-            {"detail": "Invalid user or password"}, status_code=401
-        )
+        return JSONResponse({"detail": "Invalid user or password"}, status_code=401)
 
     token = create_jwt_token(user)
     response = JSONResponse({"ok": True})

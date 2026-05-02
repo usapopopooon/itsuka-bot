@@ -89,9 +89,7 @@ class DiscordCacheCog(commands.Cog):
     async def on_guild_join(self, guild: discord.Guild) -> None:
         await self._sync_guild_info(guild)
         channel_count = await self._sync_guild_channels(guild)
-        logger.info(
-            "Synced %d channels for new guild %s", channel_count, guild.name
-        )
+        logger.info("Synced %d channels for new guild %s", channel_count, guild.name)
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild) -> None:
@@ -112,9 +110,7 @@ class DiscordCacheCog(commands.Cog):
             await self._sync_guild_info(after)
 
     @commands.Cog.listener()
-    async def on_guild_channel_create(
-        self, channel: discord.abc.GuildChannel
-    ) -> None:
+    async def on_guild_channel_create(self, channel: discord.abc.GuildChannel) -> None:
         if channel.type not in SYNC_CHANNEL_TYPES:
             return
         if not channel.permissions_for(channel.guild.me).view_channel:
@@ -127,9 +123,7 @@ class DiscordCacheCog(commands.Cog):
                 channel_name=channel.name,
                 channel_type=channel.type.value,
                 position=channel.position,
-                category_id=(
-                    str(channel.category_id) if channel.category_id else None
-                ),
+                category_id=(str(channel.category_id) if channel.category_id else None),
             )
 
     @commands.Cog.listener()
@@ -148,15 +142,11 @@ class DiscordCacheCog(commands.Cog):
                 channel_name=after.name,
                 channel_type=after.type.value,
                 position=after.position,
-                category_id=(
-                    str(after.category_id) if after.category_id else None
-                ),
+                category_id=(str(after.category_id) if after.category_id else None),
             )
 
     @commands.Cog.listener()
-    async def on_guild_channel_delete(
-        self, channel: discord.abc.GuildChannel
-    ) -> None:
+    async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
         async with async_session() as db_session:
             await delete_discord_channel(
                 db_session, str(channel.guild.id), str(channel.id)

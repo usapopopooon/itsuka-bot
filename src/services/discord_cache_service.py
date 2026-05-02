@@ -64,7 +64,7 @@ async def delete_discord_guild(session: AsyncSession, guild_id: str) -> bool:
         delete(DiscordGuild).where(DiscordGuild.guild_id == guild_id)
     )
     await session.commit()
-    return int(result.rowcount or 0) > 0
+    return int(result.rowcount or 0) > 0  # type: ignore[attr-defined]
 
 
 async def get_all_discord_guilds(session: AsyncSession) -> list[DiscordGuild]:
@@ -129,17 +129,15 @@ async def delete_discord_channel(
         )
     )
     await session.commit()
-    return int(result.rowcount or 0) > 0
+    return int(result.rowcount or 0) > 0  # type: ignore[attr-defined]
 
 
-async def delete_discord_channels_by_guild(
-    session: AsyncSession, guild_id: str
-) -> int:
+async def delete_discord_channels_by_guild(session: AsyncSession, guild_id: str) -> int:
     result = await session.execute(
         delete(DiscordChannel).where(DiscordChannel.guild_id == guild_id)
     )
     await session.commit()
-    return int(result.rowcount or 0)
+    return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
 
 async def get_discord_channels_by_guild(

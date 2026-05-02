@@ -31,8 +31,9 @@ class ItsukaBot(commands.Bot):
         intents.message_content = True
         intents.reactions = True
 
+        # command_prefix はスラッシュコマンドを使わない本 Bot では実質未使用
         super().__init__(
-            command_prefix="!",  # スラッシュコマンドは使わない。プレフィックスも実質未使用
+            command_prefix="!",
             intents=intents,
             activity=discord.Game(name="リアクション係"),
         )

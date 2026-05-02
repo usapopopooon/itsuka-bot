@@ -183,4 +183,4 @@ async def delete_auto_reaction_config(
     )
     result = await session.execute(stmt)
     await session.commit()
-    return int(result.rowcount or 0) > 0
+    return int(result.rowcount or 0) > 0  # type: ignore[attr-defined]

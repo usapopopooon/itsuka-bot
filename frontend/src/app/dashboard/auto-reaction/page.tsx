@@ -3,17 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { API_BASE } from '@/lib/constants'
-import type {
-  AutoReactionConfig,
-  GuildsMap,
-  ChannelsMap,
-} from '@/lib/types'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import type { AutoReactionConfig, GuildsMap, ChannelsMap } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -26,11 +17,7 @@ function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId
 }
 
-function resolveChannelName(
-  channels: ChannelsMap,
-  guildId: string,
-  channelId: string
-) {
+function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: string) {
   const list = channels[guildId] ?? []
   const ch = list.find((c) => c.id === channelId)
   return ch ? `#${ch.name}` : channelId
@@ -116,8 +103,7 @@ export default function AutoReactionPage() {
     },
     {
       header: 'Channel',
-      accessor: (row) =>
-        resolveChannelName(channels, row.guild_id, row.channel_id),
+      accessor: (row) => resolveChannelName(channels, row.guild_id, row.channel_id),
     },
     {
       header: 'Emojis',
@@ -147,9 +133,7 @@ export default function AutoReactionPage() {
             endpoint={`${API_BASE}/auto-reaction/${row.id}/toggle`}
             enabled={row.enabled}
           />
-          <DeleteButton
-            endpoint={`${API_BASE}/auto-reaction/${row.id}`}
-          />
+          <DeleteButton endpoint={`${API_BASE}/auto-reaction/${row.id}`} />
         </div>
       ),
     },
@@ -193,9 +177,7 @@ export default function AutoReactionPage() {
                 onChange={(e) => setEmojis(e.target.value)}
               />
             </div>
-            {error && (
-              <p className="text-sm text-destructive-foreground">{error}</p>
-            )}
+            {error && <p className="text-sm text-destructive-foreground">{error}</p>}
             <div>
               <Button
                 type="submit"
@@ -218,11 +200,7 @@ export default function AutoReactionPage() {
           <CardTitle>Configured Auto Reactions</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable
-            columns={columns}
-            data={configs}
-            emptyMessage="No auto reactions configured"
-          />
+          <DataTable columns={columns} data={configs} emptyMessage="No auto reactions configured" />
         </CardContent>
       </Card>
     </div>
