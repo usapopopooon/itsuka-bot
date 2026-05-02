@@ -150,6 +150,18 @@ Railway 上では **3 サービス + Postgres アドオン** を立てる。bot 
 `ADMIN_USER` / `ADMIN_PASSWORD` でログイン。Bot を Discord サーバーに
 招待した後、`/dashboard/auto-reaction` で設定を追加する。
 
+### Railway のはまりどころ
+
+- 各サービスの **Settings → Deploy → Start Command** を空欄にしておくこと
+  (`railway.*.toml` の `startCommand` が使われる)。Railway UI で手動で
+  Start Command を入れると toml 側の値より優先される。
+- 環境変数展開 (`${PORT}` など) は Railway が直接 exec するので、
+  `sh -c '...'` で包んでいる。`bash` ビルトイン (`cd` 等) を直接使うと
+  `executable not found` になるので、シェル経由にすること。
+- `frontend` サービスは Root Directory を `/frontend` に設定しないと、
+  リポジトリルートの Python Dockerfile を拾ってビルドが通ったように見えて
+  起動時に死ぬので注意。
+
 ## Discord Developer Portal
 
 - **Bot 設定** → Privileged Gateway Intents:

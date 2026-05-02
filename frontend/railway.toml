@@ -8,8 +8,7 @@ sleepApplication = false
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
 
-# このサービスは Railway UI の Settings → Source → "Root Directory" に
-# `/frontend` を指定して使う。dockerfilePath は Root Directory からの相対。
-# Next.js は ${PORT} で待ち受ける。バックエンドサービスの URL は環境変数
-# API_URL で渡す (例: ``https://${{itsuka-bot.RAILWAY_PUBLIC_DOMAIN}}``)。
-startCommand = "npm run start -- --port ${PORT:-3000} --hostname 0.0.0.0"
+# Railway UI の Settings → Source → "Root Directory" に `/frontend` を
+# 指定して使う。dockerfilePath は Root Directory からの相対。
+# ${PORT} の展開のために sh -c で包む。
+startCommand = "sh -c 'npm run start -- --port ${PORT:-3000} --hostname 0.0.0.0'"
