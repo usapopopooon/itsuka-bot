@@ -46,7 +46,10 @@ async def api_login(body: _LoginRequest, request: Request) -> JSONResponse:
         max_age=SESSION_MAX_AGE_SECONDS,
         httponly=True,
         secure=_security.SECURE_COOKIE,
-        samesite="strict",
+        # Railway 上で frontend ↔ api が別ドメインになるケースがある (Next の
+        # rewrite 経由でなく直接 fetch される場合)。strict だと cross-site で
+        # cookie が落ちて 401 ループするので lax に倒している。
+        samesite="lax",
         path="/",
     )
     return response

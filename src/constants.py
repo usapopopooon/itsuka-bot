@@ -8,7 +8,6 @@ from __future__ import annotations
 
 SESSION_MAX_AGE_SECONDS: int = 60 * 60 * 24 * 7  # 7 日
 TOKEN_BYTE_LENGTH: int = 32
-BCRYPT_MAX_PASSWORD_BYTES: int = 72  # bcrypt 仕様上の最大長
 
 # ---------------------------------------------------------------------------
 # レート制限 / クールタイム

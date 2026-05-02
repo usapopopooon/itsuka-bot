@@ -17,7 +17,9 @@ from src.services.discord_cache_service import (
     delete_discord_channel,
     delete_discord_channels_by_guild,
     delete_discord_emojis_by_guild,
+    delete_discord_emojis_by_ids,
     delete_discord_guild,
+    get_discord_emoji_ids_by_guild,
     upsert_discord_channel,
     upsert_discord_emoji,
     upsert_discord_guild,
@@ -54,12 +56,25 @@ class DiscordCacheCog(commands.Cog):
             )
 
     async def _sync_guild_emojis(self, guild: discord.Guild) -> int:
+        """guild の emoji をキャッシュへ差分同期する。
+
+        全件 DELETE → 全件 INSERT は単純だが、Web 側読み出しと衝突して
+        一瞬空が見えるリスクがある。in_(...) で消滅分だけ DELETE → 残りを
+        upsert する形にして、非衝突かつ I/O も削減する。
+        """
+        guild_id = str(guild.id)
+        target_ids = {str(emoji.id) for emoji in guild.emojis}
+
         async with async_session() as db_session:
-            await delete_discord_emojis_by_guild(db_session, str(guild.id))
+            current_ids = await get_discord_emoji_ids_by_guild(db_session, guild_id)
+            stale_ids = list(current_ids - target_ids)
+            if stale_ids:
+                await delete_discord_emojis_by_ids(db_session, guild_id, stale_ids)
+
             for emoji in guild.emojis:
                 await upsert_discord_emoji(
                     db_session,
-                    guild_id=str(guild.id),
+                    guild_id=guild_id,
                     emoji_id=str(emoji.id),
                     name=emoji.name,
                     animated=emoji.animated,

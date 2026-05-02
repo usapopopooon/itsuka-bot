@@ -60,6 +60,12 @@ app.include_router(api_auth_router)
 app.include_router(api_auto_reaction_router)
 
 
+@app.get("/health")
+async def health() -> dict[str, str]:
+    """Liveness/Readiness 用。Railway の Healthcheck Path に指定する想定。"""
+    return {"status": "ok"}
+
+
 def run() -> None:
     """`python -m src.web` 用の同期エントリーポイント。"""
     import uvicorn

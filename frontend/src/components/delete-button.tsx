@@ -17,12 +17,17 @@ interface DeleteButtonProps {
   endpoint: string
   label?: string
   confirmMessage?: string
+  /** クライアント描画ページから再フェッチするためのフック。
+   *  router.refresh() はサーバーコンポーネント想定で、
+   *  useState ベースの一覧では再取得を起こさないため必須。 */
+  onSuccess?: () => void
 }
 
 export function DeleteButton({
   endpoint,
   label = 'Delete',
   confirmMessage = 'Are you sure you want to delete this item? This action cannot be undone.',
+  onSuccess,
 }: DeleteButtonProps) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -33,6 +38,7 @@ export function DeleteButton({
     try {
       await fetch(endpoint, { method: 'DELETE' })
       setOpen(false)
+      onSuccess?.()
       router.refresh()
     } finally {
       setLoading(false)

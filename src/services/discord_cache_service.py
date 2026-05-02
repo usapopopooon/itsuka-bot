@@ -15,10 +15,12 @@ __all__ = [
     "delete_discord_channel",
     "delete_discord_channels_by_guild",
     "delete_discord_emojis_by_guild",
+    "delete_discord_emojis_by_ids",
     "delete_discord_guild",
     "get_all_discord_emojis",
     "get_all_discord_guilds",
     "get_discord_channels_by_guild",
+    "get_discord_emoji_ids_by_guild",
     "get_discord_emojis_by_guild",
     "upsert_discord_channel",
     "upsert_discord_emoji",
@@ -203,6 +205,30 @@ async def delete_discord_emojis_by_guild(session: AsyncSession, guild_id: str) -
     )
     await session.commit()
     return int(result.rowcount or 0)  # type: ignore[attr-defined]
+
+
+async def delete_discord_emojis_by_ids(
+    session: AsyncSession, guild_id: str, emoji_ids: list[str]
+) -> int:
+    if not emoji_ids:
+        return 0
+    result = await session.execute(
+        delete(DiscordEmoji).where(
+            DiscordEmoji.guild_id == guild_id,
+            DiscordEmoji.emoji_id.in_(emoji_ids),
+        )
+    )
+    await session.commit()
+    return int(result.rowcount or 0)  # type: ignore[attr-defined]
+
+
+async def get_discord_emoji_ids_by_guild(
+    session: AsyncSession, guild_id: str
+) -> set[str]:
+    result = await session.execute(
+        select(DiscordEmoji.emoji_id).where(DiscordEmoji.guild_id == guild_id)
+    )
+    return {row[0] for row in result.all()}
 
 
 async def get_discord_emojis_by_guild(

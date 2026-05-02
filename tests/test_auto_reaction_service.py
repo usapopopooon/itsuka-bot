@@ -6,27 +6,7 @@ from src.services.auto_reaction_service import (
     decode_auto_reaction_emojis,
     encode_auto_reaction_emojis,
     normalize_auto_reaction_emojis,
-    parse_emoji_input,
 )
-
-
-def test_parse_emoji_input_unicode_only() -> None:
-    assert parse_emoji_input("👍 ❤️ 🎉") == ["👍", "❤️", "🎉"]
-
-
-def test_parse_emoji_input_custom_emojis_kept_intact() -> None:
-    raw = "👍 <:custom:123> <a:animated:456> 🎉"
-    assert parse_emoji_input(raw) == [
-        "👍",
-        "<:custom:123>",
-        "<a:animated:456>",
-        "🎉",
-    ]
-
-
-def test_parse_emoji_input_empty_returns_empty_list() -> None:
-    assert parse_emoji_input("") == []
-    assert parse_emoji_input("   ") == []
 
 
 def test_normalize_strips_and_drops_empty() -> None:

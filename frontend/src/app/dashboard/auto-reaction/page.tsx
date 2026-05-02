@@ -152,8 +152,9 @@ export default function AutoReactionPage() {
           <ToggleButton
             endpoint={`${API_BASE}/auto-reaction/${row.id}/toggle`}
             enabled={row.enabled}
+            onSuccess={fetchData}
           />
-          <DeleteButton endpoint={`${API_BASE}/auto-reaction/${row.id}`} />
+          <DeleteButton endpoint={`${API_BASE}/auto-reaction/${row.id}`} onSuccess={fetchData} />
         </div>
       ),
     },

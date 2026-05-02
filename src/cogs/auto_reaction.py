@@ -82,7 +82,9 @@ class AutoReactionCog(commands.Cog):
             try:
                 await message.add_reaction(emoji)
             except discord.HTTPException:
-                logger.warning(
+                # 権限不足や絵文字未参加など実運用で起こりうる失敗を warning で
+                # 出していたが、頻発時にログを汚すので INFO へ落とす。
+                logger.info(
                     "AutoReaction: Failed to add %r to message %s in channel %s",
                     emoji,
                     message.id,

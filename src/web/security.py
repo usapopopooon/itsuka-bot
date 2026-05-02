@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hmac
 import logging
 import os
@@ -17,14 +16,12 @@ import secrets
 import time
 from typing import Any
 
-import bcrypt
 from fastapi import Request
 from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.config import settings
 from src.constants import (
-    BCRYPT_MAX_PASSWORD_BYTES,
     FORM_COOLDOWN_CLEANUP_INTERVAL_SECONDS,
     FORM_SUBMIT_COOLDOWN_SECONDS,
     LOGIN_MAX_ATTEMPTS,
@@ -97,38 +94,6 @@ def verify_admin_credentials(user: str, password: str) -> bool:
     user_ok = hmac.compare_digest(user, ADMIN_USER)
     pw_ok = hmac.compare_digest(password, ADMIN_PASSWORD)
     return user_ok and pw_ok
-
-
-# ---------------------------------------------------------------------------
-# bcrypt (将来 AdminUser を DB 化するときのため温存)
-# ---------------------------------------------------------------------------
-
-
-def hash_password(password: str) -> str:
-    password_bytes = password.encode("utf-8")
-    if len(password_bytes) > BCRYPT_MAX_PASSWORD_BYTES:
-        logger.warning(
-            "Password exceeds %d bytes, truncating", BCRYPT_MAX_PASSWORD_BYTES
-        )
-        password_bytes = password_bytes[:BCRYPT_MAX_PASSWORD_BYTES]
-    return bcrypt.hashpw(password_bytes, bcrypt.gensalt()).decode()
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    if not password or not password_hash:
-        return False
-    try:
-        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
-    except (ValueError, TypeError):
-        return False
-
-
-async def hash_password_async(password: str) -> str:
-    return await asyncio.to_thread(hash_password, password)
-
-
-async def verify_password_async(password: str, password_hash: str) -> bool:
-    return await asyncio.to_thread(verify_password, password, password_hash)
 
 
 # ---------------------------------------------------------------------------
