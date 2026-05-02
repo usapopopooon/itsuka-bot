@@ -1,0 +1,14 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+numReplicas = 1
+sleepApplication = false
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Discord に常時接続する worker。Postgres アドオンの DATABASE_URL は
+# config.py 側で asyncpg 形式に自動変換するのでそのまま渡せばよい。
+# 公開ポート無し。
+startCommand = "python -m src.main"
