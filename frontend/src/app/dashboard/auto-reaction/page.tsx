@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { API_BASE } from '@/lib/constants'
 import type { AutoReactionConfig, ChannelsMap, CustomEmojisMap, GuildsMap } from '@/lib/types'
@@ -9,7 +9,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DataTable, type Column } from '@/components/data-table'
 import { DeleteButton } from '@/components/delete-button'
-import { EditEmojiButton } from '@/components/edit-emoji-button'
 import { GuildChannelSelector } from '@/components/guild-channel-selector'
 import { ToggleButton } from '@/components/toggle-button'
 import { EmojiPicker, renderEmojiToken } from '@/components/emoji-picker'
@@ -41,11 +40,16 @@ export default function AutoReactionPage() {
   const [customEmojis, setCustomEmojis] = useState<CustomEmojisMap>({})
   const [loading, setLoading] = useState(true)
 
+  // フォームの状態。`editingId !== null` なら編集モード。
+  // 編集中は guild / channel は固定 (変更不可)。
+  const [editingId, setEditingId] = useState<number | null>(null)
   const [selectedGuild, setSelectedGuild] = useState('')
   const [selectedChannel, setSelectedChannel] = useState('')
   const [picked, setPicked] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  const formRef = useRef<HTMLDivElement | null>(null)
 
   const guildCustomEmojis = useMemo(
     () => (selectedGuild ? (customEmojis[selectedGuild] ?? []) : []),
@@ -74,16 +78,26 @@ export default function AutoReactionPage() {
   function addEmoji(emoji: string) {
     setPicked((prev) => (prev.length >= MAX_EMOJIS ? prev : [...prev, emoji]))
   }
-
   function removeEmojiAt(index: number) {
     setPicked((prev) => prev.filter((_, i) => i !== index))
   }
 
   function resetForm() {
+    setEditingId(null)
     setSelectedGuild('')
     setSelectedChannel('')
     setPicked([])
     setError('')
+  }
+
+  function startEdit(row: AutoReactionConfig) {
+    setEditingId(row.id)
+    setSelectedGuild(row.guild_id)
+    setSelectedChannel(row.channel_id)
+    setPicked(row.emojis)
+    setError('')
+    // 編集対象がテーブルから上のフォームへ「移動」したことが分かるようスクロール
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
@@ -93,18 +107,20 @@ export default function AutoReactionPage() {
     if (picked.length === 0) return
     setSubmitting(true)
     try {
-      const res = await fetch(`${API_BASE}/auto-reaction`, {
-        method: 'POST',
+      const isEdit = editingId !== null
+      const url = isEdit ? `${API_BASE}/auto-reaction/${editingId}` : `${API_BASE}/auto-reaction`
+      const method = isEdit ? 'PATCH' : 'POST'
+      const payload = isEdit
+        ? { emojis: picked }
+        : { guild_id: selectedGuild, channel_id: selectedChannel, emojis: picked }
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          guild_id: selectedGuild,
-          channel_id: selectedChannel,
-          emojis: picked,
-        }),
+        body: JSON.stringify(payload),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
-        setError(body.detail || 'Failed to add auto reaction')
+        setError(body.detail || (isEdit ? 'Failed to update' : 'Failed to add'))
         return
       }
       resetForm()
@@ -114,6 +130,8 @@ export default function AutoReactionPage() {
       setSubmitting(false)
     }
   }
+
+  const isEdit = editingId !== null
 
   const columns: Column<AutoReactionConfig>[] = [
     {
@@ -155,12 +173,14 @@ export default function AutoReactionPage() {
             enabled={row.enabled}
             onSuccess={fetchData}
           />
-          <EditEmojiButton
-            configId={row.id}
-            currentEmojis={row.emojis}
-            customEmojis={customEmojis[row.guild_id] ?? []}
-            onSuccess={fetchData}
-          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => startEdit(row)}
+            disabled={editingId === row.id}
+          >
+            Edit
+          </Button>
           <DeleteButton endpoint={`${API_BASE}/auto-reaction/${row.id}`} onSuccess={fetchData} />
         </div>
       ),
@@ -180,51 +200,72 @@ export default function AutoReactionPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Auto Reaction</h1>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Add Auto Reaction</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <GuildChannelSelector
-              guilds={guilds}
-              channels={channels}
-              selectedGuild={selectedGuild}
-              selectedChannel={selectedChannel}
-              onGuildChange={(id) => {
-                setSelectedGuild(id)
-                setPicked([])
-              }}
-              onChannelChange={setSelectedChannel}
-            />
-            <div>
-              <label className="mb-1.5 block text-sm font-medium">絵文字</label>
-              {selectedGuild ? (
-                <EmojiPicker
-                  selected={picked}
-                  customEmojis={guildCustomEmojis}
-                  onAdd={addEmoji}
-                  onRemove={removeEmojiAt}
-                  maxCount={MAX_EMOJIS}
-                />
+      <div ref={formRef}>
+        <Card>
+          <CardHeader>
+            <CardTitle>{isEdit ? 'Edit Auto Reaction' : 'Add Auto Reaction'}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {isEdit ? (
+                <div className="rounded-md border border-input bg-muted/40 px-3 py-2 text-sm">
+                  <span className="text-muted-foreground">対象: </span>
+                  <span className="font-medium">{resolveGuildName(guilds, selectedGuild)}</span>
+                  <span className="text-muted-foreground"> / </span>
+                  <span className="font-medium">
+                    {resolveChannelName(channels, selectedGuild, selectedChannel)}
+                  </span>
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    (サーバー / チャンネルは変更不可。変えたい場合は削除して再追加)
+                  </span>
+                </div>
               ) : (
-                <p className="rounded-md border border-dashed border-input px-3 py-4 text-center text-sm text-muted-foreground">
-                  まずサーバーを選択してください
-                </p>
+                <GuildChannelSelector
+                  guilds={guilds}
+                  channels={channels}
+                  selectedGuild={selectedGuild}
+                  selectedChannel={selectedChannel}
+                  onGuildChange={(id) => {
+                    setSelectedGuild(id)
+                    setPicked([])
+                  }}
+                  onChannelChange={setSelectedChannel}
+                />
               )}
-            </div>
-            {error && <p className="text-sm text-destructive-foreground">{error}</p>}
-            <div>
-              <Button
-                type="submit"
-                disabled={submitting || !selectedGuild || !selectedChannel || picked.length === 0}
-              >
-                {submitting ? 'Adding...' : 'Add'}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">絵文字</label>
+                {selectedGuild ? (
+                  <EmojiPicker
+                    selected={picked}
+                    customEmojis={guildCustomEmojis}
+                    onAdd={addEmoji}
+                    onRemove={removeEmojiAt}
+                    maxCount={MAX_EMOJIS}
+                  />
+                ) : (
+                  <p className="rounded-md border border-dashed border-input px-3 py-4 text-center text-sm text-muted-foreground">
+                    まずサーバーを選択してください
+                  </p>
+                )}
+              </div>
+              {error && <p className="text-sm text-destructive-foreground">{error}</p>}
+              <div className="flex items-center gap-2">
+                <Button
+                  type="submit"
+                  disabled={submitting || !selectedGuild || !selectedChannel || picked.length === 0}
+                >
+                  {submitting ? (isEdit ? 'Saving...' : 'Adding...') : isEdit ? 'Save' : 'Add'}
+                </Button>
+                {isEdit && (
+                  <Button type="button" variant="outline" onClick={resetForm} disabled={submitting}>
+                    Cancel
+                  </Button>
+                )}
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
 
       <Card>
         <CardHeader>
