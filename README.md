@@ -66,16 +66,25 @@ docker compose up --build
 `http://localhost:3000/login` にアクセスして `ADMIN_USER` / `ADMIN_PASSWORD`
 でログインする。
 
-## セットアップ (ローカル開発、SQLite)
+## セットアップ (ローカル開発)
 
-### Backend
+ローカルでも Postgres を使う。docker-compose の `db` サービスだけ立てて
+bot / api / frontend は venv / npm で動かす運用を推奨。
+
+### 1. Postgres を起動
+
+```bash
+docker compose up -d db   # localhost:5432 に Postgres
+```
+
+### 2. Backend
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e ".[dev]"
 
-cp .env.example .env  # DATABASE_URL は SQLite のままで良い
+cp .env.example .env  # DISCORD_TOKEN / ADMIN_PASSWORD を埋める
 
 # Bot プロセス
 python -m src.main
@@ -84,7 +93,7 @@ python -m src.main
 uvicorn src.web.app:app --reload --port 8000
 ```
 
-### Frontend
+### 3. Frontend
 
 ```bash
 cd frontend

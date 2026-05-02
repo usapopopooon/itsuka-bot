@@ -48,10 +48,17 @@ def _normalize_database_url(raw: str) -> str:
 
 
 def _load() -> Settings:
+    # 既定は手元で `docker compose up -d db` した想定の Postgres 接続。
+    # SQLite を使うのはテスト (in-memory) のときだけで、その場合は
+    # conftest.py が DATABASE_URL を上書きするので問題ない。
     database_url = _normalize_database_url(
-        _get("DATABASE_URL", "sqlite+aiosqlite:///./data/itsuka.db")
+        _get(
+            "DATABASE_URL",
+            "postgresql+asyncpg://user:password@localhost:5432/itsuka_bot",
+        )
     )
 
+    # SQLite ファイル (テスト等) のときは親ディレクトリを掘っておく
     if database_url.startswith("sqlite+aiosqlite:///"):
         path_part = database_url.removeprefix("sqlite+aiosqlite:///")
         if path_part and not path_part.startswith(":memory:"):
