@@ -45,6 +45,7 @@ async def api_auto_reaction_list(
     configs = list(result.scalars().all())
 
     guilds_map, channels_map = await _db._get_discord_guilds_and_channels(db)
+    emojis_map = await _db._get_discord_emojis_by_guild(db)
 
     return JSONResponse(
         {
@@ -63,6 +64,7 @@ async def api_auto_reaction_list(
                 gid: [{"id": cid, "name": cname} for cid, cname in clist]
                 for gid, clist in channels_map.items()
             },
+            "custom_emojis": emojis_map,
         }
     )
 

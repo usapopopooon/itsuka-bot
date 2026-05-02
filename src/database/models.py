@@ -76,6 +76,36 @@ class DiscordGuild(Base):
         return f"<DiscordGuild(guild_id={self.guild_id}, name={self.guild_name})>"
 
 
+class DiscordEmoji(Base):
+    """Discord カスタム絵文字キャッシュ。
+
+    Bot が見える guild の custom emoji を保存し、Web 管理画面の絵文字
+    ピッカーで選択肢として提供する。Unicode 絵文字はキャッシュ不要。
+    """
+
+    __tablename__ = "discord_emojis"
+    __table_args__ = (UniqueConstraint("guild_id", "emoji_id", name="uq_guild_emoji"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    emoji_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    animated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<DiscordEmoji(guild_id={self.guild_id}, emoji_id={self.emoji_id}, "
+            f"name={self.name}, animated={self.animated})>"
+        )
+
+
 class DiscordChannel(Base):
     """Discord チャンネル情報のキャッシュテーブル。
 

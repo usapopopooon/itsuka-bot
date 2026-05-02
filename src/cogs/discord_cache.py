@@ -16,8 +16,10 @@ from src.database.engine import async_session
 from src.services.discord_cache_service import (
     delete_discord_channel,
     delete_discord_channels_by_guild,
+    delete_discord_emojis_by_guild,
     delete_discord_guild,
     upsert_discord_channel,
+    upsert_discord_emoji,
     upsert_discord_guild,
 )
 
@@ -51,6 +53,20 @@ class DiscordCacheCog(commands.Cog):
                 member_count=guild.member_count or 0,
             )
 
+    async def _sync_guild_emojis(self, guild: discord.Guild) -> int:
+        async with async_session() as db_session:
+            await delete_discord_emojis_by_guild(db_session, str(guild.id))
+            for emoji in guild.emojis:
+                await upsert_discord_emoji(
+                    db_session,
+                    guild_id=str(guild.id),
+                    emoji_id=str(emoji.id),
+                    name=emoji.name,
+                    animated=emoji.animated,
+                    available=emoji.available,
+                )
+        return len(guild.emojis)
+
     async def _sync_guild_channels(self, guild: discord.Guild) -> int:
         count = 0
         async with async_session() as db_session:
@@ -78,18 +94,38 @@ class DiscordCacheCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self) -> None:
         total_channels = 0
+        total_emojis = 0
         for guild in self.bot.guilds:
             await self._sync_guild_info(guild)
             total_channels += await self._sync_guild_channels(guild)
+            total_emojis += await self._sync_guild_emojis(guild)
         logger.info(
-            "Synced %d guilds, %d channels", len(self.bot.guilds), total_channels
+            "Synced %d guilds, %d channels, %d emojis",
+            len(self.bot.guilds),
+            total_channels,
+            total_emojis,
         )
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild) -> None:
         await self._sync_guild_info(guild)
         channel_count = await self._sync_guild_channels(guild)
-        logger.info("Synced %d channels for new guild %s", channel_count, guild.name)
+        emoji_count = await self._sync_guild_emojis(guild)
+        logger.info(
+            "Synced new guild %s: %d channels, %d emojis",
+            guild.name,
+            channel_count,
+            emoji_count,
+        )
+
+    @commands.Cog.listener()
+    async def on_guild_emojis_update(
+        self,
+        guild: discord.Guild,
+        _before: list[discord.Emoji],
+        _after: list[discord.Emoji],
+    ) -> None:
+        await self._sync_guild_emojis(guild)
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild) -> None:
@@ -97,6 +133,7 @@ class DiscordCacheCog(commands.Cog):
             channel_count = await delete_discord_channels_by_guild(
                 db_session, str(guild.id)
             )
+            await delete_discord_emojis_by_guild(db_session, str(guild.id))
             await delete_discord_guild(db_session, str(guild.id))
         logger.info(
             "Removed cache for guild %s (%d channels)", guild.name, channel_count

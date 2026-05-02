@@ -1,17 +1,19 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { API_BASE } from '@/lib/constants'
-import type { AutoReactionConfig, GuildsMap, ChannelsMap } from '@/lib/types'
+import type { AutoReactionConfig, ChannelsMap, CustomEmojisMap, GuildsMap } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { DataTable, type Column } from '@/components/data-table'
 import { DeleteButton } from '@/components/delete-button'
 import { GuildChannelSelector } from '@/components/guild-channel-selector'
 import { ToggleButton } from '@/components/toggle-button'
+import { EmojiPicker, renderEmojiToken } from '@/components/emoji-picker'
+
+const MAX_EMOJIS = 20
 
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId
@@ -23,14 +25,11 @@ function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: s
   return ch ? `#${ch.name}` : channelId
 }
 
-function parseEmojiInput(raw: string): string[] {
-  return raw.split(/\s+/).filter((s) => s.length > 0)
-}
-
 interface AutoReactionListResponse {
   configs: AutoReactionConfig[]
   guilds: GuildsMap
   channels: ChannelsMap
+  custom_emojis: CustomEmojisMap
 }
 
 export default function AutoReactionPage() {
@@ -38,13 +37,19 @@ export default function AutoReactionPage() {
   const [configs, setConfigs] = useState<AutoReactionConfig[]>([])
   const [guilds, setGuilds] = useState<GuildsMap>({})
   const [channels, setChannels] = useState<ChannelsMap>({})
+  const [customEmojis, setCustomEmojis] = useState<CustomEmojisMap>({})
   const [loading, setLoading] = useState(true)
 
   const [selectedGuild, setSelectedGuild] = useState('')
   const [selectedChannel, setSelectedChannel] = useState('')
-  const [emojis, setEmojis] = useState('')
+  const [picked, setPicked] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  const guildCustomEmojis = useMemo(
+    () => (selectedGuild ? (customEmojis[selectedGuild] ?? []) : []),
+    [customEmojis, selectedGuild]
+  )
 
   async function fetchData() {
     const res = await fetch(`${API_BASE}/auto-reaction`)
@@ -56,6 +61,7 @@ export default function AutoReactionPage() {
     setConfigs(body.configs ?? [])
     setGuilds(body.guilds ?? {})
     setChannels(body.channels ?? {})
+    setCustomEmojis(body.custom_emojis ?? {})
     setLoading(false)
   }
 
@@ -64,12 +70,26 @@ export default function AutoReactionPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  function addEmoji(emoji: string) {
+    setPicked((prev) => (prev.length >= MAX_EMOJIS ? prev : [...prev, emoji]))
+  }
+
+  function removeEmojiAt(index: number) {
+    setPicked((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function resetForm() {
+    setSelectedGuild('')
+    setSelectedChannel('')
+    setPicked([])
+    setError('')
+  }
+
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault()
     setError('')
     if (!selectedGuild || !selectedChannel) return
-    const emojiList = parseEmojiInput(emojis)
-    if (emojiList.length === 0) return
+    if (picked.length === 0) return
     setSubmitting(true)
     try {
       const res = await fetch(`${API_BASE}/auto-reaction`, {
@@ -78,7 +98,7 @@ export default function AutoReactionPage() {
         body: JSON.stringify({
           guild_id: selectedGuild,
           channel_id: selectedChannel,
-          emojis: emojiList,
+          emojis: picked,
         }),
       })
       if (!res.ok) {
@@ -86,9 +106,7 @@ export default function AutoReactionPage() {
         setError(body.detail || 'Failed to add auto reaction')
         return
       }
-      setSelectedGuild('')
-      setSelectedChannel('')
-      setEmojis('')
+      resetForm()
       await fetchData()
       router.refresh()
     } finally {
@@ -109,7 +127,9 @@ export default function AutoReactionPage() {
       header: 'Emojis',
       accessor: (row) =>
         row.emojis.length > 0 ? (
-          <span className="font-mono text-sm">{row.emojis.join(' ')}</span>
+          <span className="inline-flex flex-wrap items-center gap-1">
+            {row.emojis.map((emoji, i) => renderEmojiToken(emoji, `${row.id}-${i}`))}
+          </span>
         ) : (
           <span className="text-muted-foreground">(none)</span>
         ),
@@ -163,30 +183,33 @@ export default function AutoReactionPage() {
               channels={channels}
               selectedGuild={selectedGuild}
               selectedChannel={selectedChannel}
-              onGuildChange={setSelectedGuild}
+              onGuildChange={(id) => {
+                setSelectedGuild(id)
+                setPicked([])
+              }}
               onChannelChange={setSelectedChannel}
             />
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Emojis (space-separated; Unicode 絵文字 or {'<:name:id>'} for custom)
-              </label>
-              <Input
-                type="text"
-                placeholder="👍 ❤️ <:custom:123456789012345678>"
-                value={emojis}
-                onChange={(e) => setEmojis(e.target.value)}
-              />
+              <label className="mb-1.5 block text-sm font-medium">絵文字</label>
+              {selectedGuild ? (
+                <EmojiPicker
+                  selected={picked}
+                  customEmojis={guildCustomEmojis}
+                  onAdd={addEmoji}
+                  onRemove={removeEmojiAt}
+                  maxCount={MAX_EMOJIS}
+                />
+              ) : (
+                <p className="rounded-md border border-dashed border-input px-3 py-4 text-center text-sm text-muted-foreground">
+                  まずサーバーを選択してください
+                </p>
+              )}
             </div>
             {error && <p className="text-sm text-destructive-foreground">{error}</p>}
             <div>
               <Button
                 type="submit"
-                disabled={
-                  submitting ||
-                  !selectedGuild ||
-                  !selectedChannel ||
-                  parseEmojiInput(emojis).length === 0
-                }
+                disabled={submitting || !selectedGuild || !selectedChannel || picked.length === 0}
               >
                 {submitting ? 'Adding...' : 'Add'}
               </Button>

@@ -9,15 +9,19 @@ from __future__ import annotations
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models import DiscordChannel, DiscordGuild
+from src.database.models import DiscordChannel, DiscordEmoji, DiscordGuild
 
 __all__ = [
     "delete_discord_channel",
     "delete_discord_channels_by_guild",
+    "delete_discord_emojis_by_guild",
     "delete_discord_guild",
+    "get_all_discord_emojis",
     "get_all_discord_guilds",
     "get_discord_channels_by_guild",
+    "get_discord_emojis_by_guild",
     "upsert_discord_channel",
+    "upsert_discord_emoji",
     "upsert_discord_guild",
 ]
 
@@ -147,5 +151,75 @@ async def get_discord_channels_by_guild(
         select(DiscordChannel)
         .where(DiscordChannel.guild_id == guild_id)
         .order_by(DiscordChannel.position)
+    )
+    return list(result.scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# DiscordEmoji
+# ---------------------------------------------------------------------------
+
+
+async def upsert_discord_emoji(
+    session: AsyncSession,
+    guild_id: str,
+    emoji_id: str,
+    name: str,
+    animated: bool = False,
+    available: bool = True,
+) -> DiscordEmoji:
+    """カスタム絵文字を作成または更新する。"""
+    result = await session.execute(
+        select(DiscordEmoji).where(
+            DiscordEmoji.guild_id == guild_id,
+            DiscordEmoji.emoji_id == emoji_id,
+        )
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        existing.name = name
+        existing.animated = animated
+        existing.available = available
+        await session.commit()
+        return existing
+
+    emoji = DiscordEmoji(
+        guild_id=guild_id,
+        emoji_id=emoji_id,
+        name=name,
+        animated=animated,
+        available=available,
+    )
+    session.add(emoji)
+    await session.commit()
+    await session.refresh(emoji)
+    return emoji
+
+
+async def delete_discord_emojis_by_guild(session: AsyncSession, guild_id: str) -> int:
+    result = await session.execute(
+        delete(DiscordEmoji).where(DiscordEmoji.guild_id == guild_id)
+    )
+    await session.commit()
+    return int(result.rowcount or 0)  # type: ignore[attr-defined]
+
+
+async def get_discord_emojis_by_guild(
+    session: AsyncSession, guild_id: str
+) -> list[DiscordEmoji]:
+    result = await session.execute(
+        select(DiscordEmoji)
+        .where(DiscordEmoji.guild_id == guild_id, DiscordEmoji.available.is_(True))
+        .order_by(DiscordEmoji.name)
+    )
+    return list(result.scalars().all())
+
+
+async def get_all_discord_emojis(session: AsyncSession) -> list[DiscordEmoji]:
+    result = await session.execute(
+        select(DiscordEmoji)
+        .where(DiscordEmoji.available.is_(True))
+        .order_by(DiscordEmoji.guild_id, DiscordEmoji.name)
     )
     return list(result.scalars().all())

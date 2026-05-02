@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.engine import async_session
-from src.database.models import DiscordChannel, DiscordGuild
+from src.database.models import DiscordChannel, DiscordEmoji, DiscordGuild
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -41,3 +41,32 @@ async def _get_discord_guilds_and_channels(
         )
 
     return guilds_map, channels_map
+
+
+async def _get_discord_emojis_by_guild(
+    db: AsyncSession,
+) -> dict[str, list[dict[str, object]]]:
+    """guild_id → [{id, name, animated, format}] の辞書。
+
+    ``format`` はメッセージに付与可能な discord 文字列表現
+    (``<:name:id>`` または ``<a:name:id>``) で、Web で選択した値を
+    そのまま AutoReactionConfig.emojis に格納できる。
+    """
+    result = await db.execute(
+        select(DiscordEmoji)
+        .where(DiscordEmoji.available.is_(True))
+        .order_by(DiscordEmoji.guild_id, DiscordEmoji.name)
+    )
+    emojis_map: dict[str, list[dict[str, object]]] = {}
+    for emoji in result.scalars():
+        prefix = "<a:" if emoji.animated else "<:"
+        formatted = f"{prefix}{emoji.name}:{emoji.emoji_id}>"
+        emojis_map.setdefault(emoji.guild_id, []).append(
+            {
+                "id": emoji.emoji_id,
+                "name": emoji.name,
+                "animated": emoji.animated,
+                "format": formatted,
+            }
+        )
+    return emojis_map
