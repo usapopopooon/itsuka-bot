@@ -39,6 +39,10 @@ class AutoReactionConfig(Base):
     guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     channel_id: Mapped[str] = mapped_column(String, nullable=False)
     emojis: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    # 正規表現フィルタ。NULL or 空文字なら全メッセージにマッチ (= フィルタなし)。
+    # Python の re.search を使うので部分マッチ。フラグはインライン記法で
+    # 指定可能 (例: ``(?i)hello`` で大文字小文字無視)。
+    pattern: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False

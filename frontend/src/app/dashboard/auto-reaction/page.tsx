@@ -7,6 +7,7 @@ import type { AutoReactionConfig, ChannelsMap, CustomEmojisMap, GuildsMap } from
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { DataTable, type Column } from '@/components/data-table'
 import { DeleteButton } from '@/components/delete-button'
 import { GuildChannelSelector } from '@/components/guild-channel-selector'
@@ -46,6 +47,7 @@ export default function AutoReactionPage() {
   const [selectedGuild, setSelectedGuild] = useState('')
   const [selectedChannel, setSelectedChannel] = useState('')
   const [picked, setPicked] = useState<string[]>([])
+  const [pattern, setPattern] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -87,6 +89,7 @@ export default function AutoReactionPage() {
     setSelectedGuild('')
     setSelectedChannel('')
     setPicked([])
+    setPattern('')
     setError('')
   }
 
@@ -95,6 +98,7 @@ export default function AutoReactionPage() {
     setSelectedGuild(row.guild_id)
     setSelectedChannel(row.channel_id)
     setPicked(row.emojis)
+    setPattern(row.pattern ?? '')
     setError('')
     // 編集対象がテーブルから上のフォームへ「移動」したことが分かるようスクロール
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -110,9 +114,15 @@ export default function AutoReactionPage() {
       const isEdit = editingId !== null
       const url = isEdit ? `${API_BASE}/auto-reaction/${editingId}` : `${API_BASE}/auto-reaction`
       const method = isEdit ? 'PATCH' : 'POST'
+      const trimmedPattern = pattern.trim() ? pattern.trim() : null
       const payload = isEdit
-        ? { emojis: picked }
-        : { guild_id: selectedGuild, channel_id: selectedChannel, emojis: picked }
+        ? { emojis: picked, pattern: trimmedPattern }
+        : {
+            guild_id: selectedGuild,
+            channel_id: selectedChannel,
+            emojis: picked,
+            pattern: trimmedPattern,
+          }
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
@@ -151,6 +161,15 @@ export default function AutoReactionPage() {
           </span>
         ) : (
           <span className="text-muted-foreground">(none)</span>
+        ),
+    },
+    {
+      header: 'Filter (regex)',
+      accessor: (row) =>
+        row.pattern ? (
+          <code className="text-xs">{row.pattern}</code>
+        ) : (
+          <span className="text-xs text-muted-foreground">(全件)</span>
         ),
     },
     {
@@ -247,6 +266,26 @@ export default function AutoReactionPage() {
                     まずサーバーを選択してください
                   </p>
                 )}
+              </div>
+
+              <div>
+                <label htmlFor="pattern" className="mb-1.5 block text-sm font-medium">
+                  正規表現フィルタ <span className="text-muted-foreground">(任意)</span>
+                </label>
+                <Input
+                  id="pattern"
+                  type="text"
+                  placeholder="例: (?i)おはよう|good\s*morning"
+                  value={pattern}
+                  onChange={(e) => setPattern(e.target.value)}
+                  spellCheck={false}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  本文がこのパターンに <code>re.search</code>{' '}
+                  でマッチした投稿だけにリアクションを付ける。
+                  空欄なら全件にリアクション。大文字小文字を無視するなら先頭に <code>(?i)</code>{' '}
+                  を付ける。
+                </p>
               </div>
               {error && <p className="text-sm text-destructive-foreground">{error}</p>}
               <div className="flex items-center gap-2">

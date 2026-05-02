@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -19,16 +20,34 @@ from src.services.auto_reaction_service import (
     decode_auto_reaction_emojis,
     encode_auto_reaction_emojis,
     normalize_auto_reaction_emojis,
+    validate_pattern,
 )
 from src.web.jwt_auth import get_current_user_jwt
 
 router = APIRouter(prefix="/api/v1", tags=["api-auto-reaction"])
 
 
+def _serialize(config: AutoReactionConfig) -> dict[str, Any]:
+    return {
+        "id": config.id,
+        "guild_id": config.guild_id,
+        "channel_id": config.channel_id,
+        "emojis": decode_auto_reaction_emojis(config.emojis),
+        "pattern": config.pattern,
+        "enabled": config.enabled,
+    }
+
+
 class _AutoReactionCreateRequest(BaseModel):
     guild_id: str
     channel_id: str
     emojis: list[str]
+    pattern: str | None = None
+
+
+class _AutoReactionUpdateRequest(BaseModel):
+    emojis: list[str]
+    pattern: str | None = None
 
 
 @router.get("/auto-reaction", response_model=None)
@@ -49,16 +68,7 @@ async def api_auto_reaction_list(
 
     return JSONResponse(
         {
-            "configs": [
-                {
-                    "id": c.id,
-                    "guild_id": c.guild_id,
-                    "channel_id": c.channel_id,
-                    "emojis": decode_auto_reaction_emojis(c.emojis),
-                    "enabled": c.enabled,
-                }
-                for c in configs
-            ],
+            "configs": [_serialize(c) for c in configs],
             "guilds": guilds_map,
             "channels": {
                 gid: [{"id": cid, "name": cname} for cid, cname in clist]
@@ -101,10 +111,16 @@ async def api_auto_reaction_create(
             status_code=422,
         )
 
+    try:
+        pattern = validate_pattern(body.pattern)
+    except re.error as e:
+        return JSONResponse({"detail": f"Invalid regex pattern: {e}"}, status_code=422)
+
     config = AutoReactionConfig(
         guild_id=body.guild_id,
         channel_id=body.channel_id,
         emojis=encode_auto_reaction_emojis(emojis),
+        pattern=pattern,
     )
     db.add(config)
     try:
@@ -118,20 +134,7 @@ async def api_auto_reaction_create(
 
     _security.record_form_submit(user_id, path)
     await db.refresh(config)
-
-    return JSONResponse(
-        {
-            "ok": True,
-            "config": {
-                "id": config.id,
-                "guild_id": config.guild_id,
-                "channel_id": config.channel_id,
-                "emojis": decode_auto_reaction_emojis(config.emojis),
-                "enabled": config.enabled,
-            },
-        },
-        status_code=201,
-    )
+    return JSONResponse({"ok": True, "config": _serialize(config)}, status_code=201)
 
 
 @router.delete("/auto-reaction/{config_id}", response_model=None)
@@ -163,10 +166,6 @@ async def api_auto_reaction_delete(
     return JSONResponse({"ok": True})
 
 
-class _AutoReactionUpdateRequest(BaseModel):
-    emojis: list[str]
-
-
 @router.patch("/auto-reaction/{config_id}", response_model=None)
 async def api_auto_reaction_update(
     request: Request,
@@ -195,6 +194,11 @@ async def api_auto_reaction_update(
             status_code=422,
         )
 
+    try:
+        pattern = validate_pattern(body.pattern)
+    except re.error as e:
+        return JSONResponse({"detail": f"Invalid regex pattern: {e}"}, status_code=422)
+
     result = await db.execute(
         select(AutoReactionConfig).where(AutoReactionConfig.id == config_id)
     )
@@ -203,21 +207,11 @@ async def api_auto_reaction_update(
         return JSONResponse({"detail": "Not found"}, status_code=404)
 
     config.emojis = encode_auto_reaction_emojis(emojis)
+    config.pattern = pattern
     await db.commit()
     _security.record_form_submit(user_id, path)
     await db.refresh(config)
-    return JSONResponse(
-        {
-            "ok": True,
-            "config": {
-                "id": config.id,
-                "guild_id": config.guild_id,
-                "channel_id": config.channel_id,
-                "emojis": decode_auto_reaction_emojis(config.emojis),
-                "enabled": config.enabled,
-            },
-        }
-    )
+    return JSONResponse({"ok": True, "config": _serialize(config)})
 
 
 @router.patch("/auto-reaction/{config_id}/toggle", response_model=None)

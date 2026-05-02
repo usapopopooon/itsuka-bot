@@ -17,17 +17,20 @@ logger = logging.getLogger(__name__)
 class ItsukaBot(commands.Bot):
     """Itsuka Bot 本体。
 
-    Intents は最小構成。本文を一切読まないため ``message_content`` (privileged)
-    は要求しない。
+    AutoReaction の正規表現フィルタが本文を参照するため、``message_content``
+    (privileged intent) を要求する。Discord Developer Portal の Bot 設定で
+    "Message Content Intent" を ON にしておくこと。
 
     - ``guilds``: ギルド / チャンネル変更イベント
-    - ``guild_messages``: ``on_message`` を発火させるための非 privileged intent
+    - ``guild_messages``: ``on_message`` を発火させる
+    - ``message_content``: 正規表現マッチ用にメッセージ本文を読む (privileged)
     """
 
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.guilds = True
         intents.guild_messages = True
+        intents.message_content = True
 
         # command_prefix はスラッシュコマンドを使わない本 Bot では実質未使用
         super().__init__(

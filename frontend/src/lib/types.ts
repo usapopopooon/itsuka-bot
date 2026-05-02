@@ -20,5 +20,7 @@ export interface AutoReactionConfig {
   guild_id: string
   channel_id: string
   emojis: string[]
+  /** 正規表現 (Python re.search 用)。null/空なら全件にマッチ。 */
+  pattern: string | null
   enabled: boolean
 }

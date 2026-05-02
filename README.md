@@ -186,8 +186,9 @@ Railway 上では **3 サービス + Postgres アドオン** を立てる。bot 
 
 ## Discord Developer Portal
 
-- **Privileged Gateway Intents**: 全部 OFF のままで動く
-  (本文も Member 情報も読まないため)
+- **Privileged Gateway Intents**:
+  - **Message Content Intent**: **ON** (正規表現フィルタで本文を読むため必須)
+  - その他は OFF のまま
 - **Bot Permissions** (招待時): `View Channels`, `Send Messages`,
   `Add Reactions`, `Use External Emojis`, `Read Message History`
 
