@@ -14,5 +14,5 @@ RUN mkdir -p data
 
 # 既定では bot worker として起動する。
 # - docker-compose.yml の `bot` / `api` サービスは `command:` で上書き
-# - Railway は railway.bot.toml / railway.api.toml の startCommand で上書き
+# - Railway は railway.toml / railway.api.toml の startCommand で上書き
 CMD ["python", "-m", "src.main"]

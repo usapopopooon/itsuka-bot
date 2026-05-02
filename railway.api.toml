@@ -7,7 +7,10 @@ numReplicas = 1
 sleepApplication = false
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
+healthcheckPath = "/health"
 
-# FastAPI 管理 API。Railway が割り当てる ${PORT} に bind するため、
-# 環境変数の展開のために sh -c で包んで起動する。
-startCommand = "sh -c 'uvicorn src.web.app:app --host 0.0.0.0 --port ${PORT}'"
+# FastAPI 管理 API。Railway が割り当てる ${PORT} に bind。
+# Railway の private network (*.railway.internal) は IPv6-only なので
+# `::` (IPv6 wildcard、IPv4 も dual-stack で受ける) を指定する。
+# 0.0.0.0 にすると IPv4 専用になり frontend からの private 接続が ECONNREFUSED で死ぬ。
+startCommand = "sh -c 'uvicorn src.web.app:app --host :: --port ${PORT}'"
