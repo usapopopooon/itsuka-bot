@@ -115,40 +115,53 @@ Railway 上では **3 サービス + Postgres アドオン** を立てる。bot 
 
 ### 2. サービスを 3 つ作る
 
-それぞれ `Settings → Source` で対応する Config Path を指定する:
-
-| サービス | Config Path | Root Directory | 公開ポート |
+| サービス | Root Directory | Custom Start Command | 公開ポート |
 | --- | --- | --- | --- |
-| `itsuka-bot` (Worker) | `railway.bot.toml` | `/` | なし |
-| `itsuka-api` (FastAPI) | `railway.api.toml` | `/` | あり (Generate Domain) |
-| `itsuka-frontend` (Next.js) | `frontend/railway.toml` | `/frontend` | あり (Generate Domain) |
+| `itsuka-bot` (Worker) | 空欄 (=`/`) | (空欄、`/railway.toml` + Dockerfile CMD で OK) | なし |
+| `itsuka-api` (FastAPI) | 空欄 (=`/`) | `sh -c 'uvicorn src.web.app:app --host :: --port ${PORT}'` | あり (Generate Domain) |
+| `itsuka-frontend` (Next.js) | `/frontend` | (空欄、`frontend/railway.toml` で OK) | あり (Generate Domain) |
+
+> Railway は `railway.toml` (default name) しか自動で拾わないため、複数サービスで
+> 別々の `startCommand` を持たせるには、**toml に書かず UI の Custom Start Command
+> で個別指定する** のが確実。`/railway.toml` から `startCommand` を抜いてある
+> のはこのため (UI 側で編集できなくなるのを避ける)。
+>
+> Railway の private network (`*.railway.internal`) は IPv6-only なので、api は
+> `--host ::` で bind すること (IPv4 dual-stack も同時に受ける)。`0.0.0.0` だと
+> private 経由のアクセスが ECONNREFUSED で死ぬ。
 
 ### 3. 環境変数
 
 各サービスに以下を設定する。
 
-**`itsuka-bot`** および **`itsuka-api`** (共通):
+**`itsuka-bot`** だけ:
 
 | Key | Value |
 | --- | --- |
 | `DISCORD_TOKEN` | Discord Bot トークン |
+
+**`itsuka-api`** だけ:
+
+| Key | Value |
+| --- | --- |
 | `ADMIN_USER` | Web 管理画面のユーザー名 (例: `admin`) |
 | `ADMIN_PASSWORD` | Web 管理画面のパスワード |
 | `SESSION_SECRET_KEY` | JWT 署名鍵 (Railway の `Generate` で乱数を生成) |
 | `SECURE_COOKIE` | `true` (HTTPS 配信のため) |
-| `LOG_LEVEL` | `INFO` |
+| `CORS_ORIGINS` | `https://${{itsuka-frontend.RAILWAY_PUBLIC_DOMAIN}}` |
 
-**`itsuka-api`** のみ追加:
+**共通** (3 サービス全部):
 
 | Key | Value |
 | --- | --- |
-| `CORS_ORIGINS` | `https://${{itsuka-frontend.RAILWAY_PUBLIC_DOMAIN}}` |
+| `LOG_LEVEL` | `INFO` |
+| `DATABASE_URL` | Postgres アドオンが自動注入 (bot と api のみ) |
 
 **`itsuka-frontend`** のみ:
 
 | Key | Value |
 | --- | --- |
-| `API_URL` | `https://${{itsuka-api.RAILWAY_PUBLIC_DOMAIN}}` |
+| `API_URL` | `http://${{itsuka-api.RAILWAY_PRIVATE_DOMAIN}}:${{itsuka-api.PORT}}` (private、推奨) または `https://${{itsuka-api.RAILWAY_PUBLIC_DOMAIN}}` (public) |
 
 `${{service-name.RAILWAY_PUBLIC_DOMAIN}}` は Railway のサービス参照変数で、
 他サービスのドメインに展開される。
