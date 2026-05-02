@@ -1,7 +1,12 @@
 """Auto Reaction cog.
 
 設定済みチャンネルへの新規メッセージへ、登録済みの絵文字を自動でリアクション
-として付与する。Bot 自身およびその他の Bot の発言は無視する。
+として付与する。以下は対象外:
+
+- Bot 自身および他の Bot の発言 (``author.bot``)
+- Webhook 経由の投稿 (GitHub / Zapier 等; ``message.webhook_id``)
+- システムメッセージ (参加通知・ピン通知等; ``MessageType.default`` /
+  ``MessageType.reply`` 以外)
 
 ホットパス最適化: on_message は per-message に呼ばれるため DB アクセス・
 JSON デコード・絵文字パースを全て事前計算してキャッシュする。
@@ -23,6 +28,13 @@ logger = logging.getLogger(__name__)
 
 def _parse_emojis(raws: list[str]) -> list[discord.PartialEmoji]:
     return [discord.PartialEmoji.from_str(r) for r in raws]
+
+
+# 通常投稿と返信のみリアクション対象とする。スラッシュコマンドの応答や
+# 参加通知・ピン通知等のシステムメッセージは弾く。
+_REACTABLE_MESSAGE_TYPES: frozenset[discord.MessageType] = frozenset(
+    {discord.MessageType.default, discord.MessageType.reply}
+)
 
 
 class AutoReactionCog(commands.Cog):
@@ -54,6 +66,10 @@ class AutoReactionCog(commands.Cog):
         if not message.guild or not message.author:
             return
         if message.author.bot:
+            return
+        if message.webhook_id is not None:
+            return
+        if message.type not in _REACTABLE_MESSAGE_TYPES:
             return
         if self._configs is None:
             return
