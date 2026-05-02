@@ -173,8 +173,8 @@ Railway 上では **3 サービス + Postgres アドオン** を立てる。bot 
 
 ## Discord Developer Portal
 
-- **Bot 設定** → Privileged Gateway Intents:
-  - **Message Content Intent**: ON (将来拡張用、必須ではない)
+- **Privileged Gateway Intents**: 全部 OFF のままで動く
+  (本文も Member 情報も読まないため)
 - **Bot Permissions** (招待時): `View Channels`, `Send Messages`,
   `Add Reactions`, `Use External Emojis`, `Read Message History`
 

@@ -17,19 +17,17 @@ logger = logging.getLogger(__name__)
 class ItsukaBot(commands.Bot):
     """Itsuka Bot 本体。
 
-    Intents:
-        - guilds: サーバー情報
-        - guild_messages: チャンネルへの投稿イベント
-        - message_content: メッセージ内容 (将来拡張用)
-        - reactions: リアクション関連イベント
+    Intents は最小構成。本文を一切読まないため ``message_content`` (privileged)
+    は要求しない。
+
+    - ``guilds``: ギルド / チャンネル変更イベント
+    - ``guild_messages``: ``on_message`` を発火させるための非 privileged intent
     """
 
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.guilds = True
         intents.guild_messages = True
-        intents.message_content = True
-        intents.reactions = True
 
         # command_prefix はスラッシュコマンドを使わない本 Bot では実質未使用
         super().__init__(
