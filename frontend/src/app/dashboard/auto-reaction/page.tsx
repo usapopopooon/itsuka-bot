@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DataTable, type Column } from '@/components/data-table'
 import { DeleteButton } from '@/components/delete-button'
+import { EditEmojiButton } from '@/components/edit-emoji-button'
 import { GuildChannelSelector } from '@/components/guild-channel-selector'
 import { ToggleButton } from '@/components/toggle-button'
 import { EmojiPicker, renderEmojiToken } from '@/components/emoji-picker'
@@ -152,6 +153,12 @@ export default function AutoReactionPage() {
           <ToggleButton
             endpoint={`${API_BASE}/auto-reaction/${row.id}/toggle`}
             enabled={row.enabled}
+            onSuccess={fetchData}
+          />
+          <EditEmojiButton
+            configId={row.id}
+            currentEmojis={row.emojis}
+            customEmojis={customEmojis[row.guild_id] ?? []}
             onSuccess={fetchData}
           />
           <DeleteButton endpoint={`${API_BASE}/auto-reaction/${row.id}`} onSuccess={fetchData} />

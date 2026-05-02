@@ -1,9 +1,38 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import { useMemo, useState } from 'react'
 import type { CustomEmoji } from '@/lib/types'
-import { UNICODE_EMOJI_SUGGESTIONS } from '@/lib/emoji-suggestions'
 import { cn } from '@/lib/utils'
+
+// emoji-mart は data だけで ~1MB あるので動的 import で初回マウント時にだけロード
+const EmojiMartPicker = dynamic(
+  async () => {
+    const [{ default: Picker }, { default: data }] = await Promise.all([
+      import('@emoji-mart/react'),
+      import('@emoji-mart/data'),
+    ])
+    return function Wrapped(props: { onSelect: (native: string) => void }) {
+      return (
+        <Picker
+          data={data}
+          theme="dark"
+          previewPosition="none"
+          skinTonePosition="search"
+          onEmojiSelect={(e: { native?: string }) => {
+            if (e.native) props.onSelect(e.native)
+          }}
+        />
+      )
+    }
+  },
+  {
+    ssr: false,
+    loading: () => (
+      <div className="text-xs text-muted-foreground">絵文字ピッカーを読み込み中...</div>
+    ),
+  }
+)
 
 interface EmojiPickerProps {
   selected: string[]
@@ -66,7 +95,7 @@ export function EmojiPicker({
       <div className="min-h-10 flex flex-wrap items-center gap-2 rounded-md border border-input bg-transparent px-3 py-2">
         {selected.length === 0 ? (
           <span className="text-sm text-muted-foreground">
-            下のリストから絵文字を選んでください (最大 {maxCount} 個)
+            下から絵文字を選んでください (最大 {maxCount} 個)
           </span>
         ) : (
           selected.map((emoji, i) => (
@@ -84,79 +113,59 @@ export function EmojiPicker({
         )}
       </div>
 
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">
-          {selected.length} / {maxCount}
-        </span>
-        <input
-          type="text"
-          placeholder="カスタム絵文字を名前で検索"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="h-8 w-56 rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        />
+      <div className="text-xs text-muted-foreground">
+        {selected.length} / {maxCount}
       </div>
 
-      {/* カスタム絵文字 */}
-      <div>
-        <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-          このサーバーのカスタム絵文字 ({filteredCustom.length})
-        </div>
-        {filteredCustom.length === 0 ? (
-          <div className="rounded-md border border-dashed border-input px-3 py-4 text-center text-xs text-muted-foreground">
-            このサーバーには利用可能なカスタム絵文字がありません
+      <div className="grid gap-3 md:grid-cols-2">
+        {/* カスタム絵文字 */}
+        <div>
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-medium text-muted-foreground">
+              このサーバーのカスタム絵文字 ({filteredCustom.length})
+            </span>
+            <input
+              type="text"
+              placeholder="名前で検索"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="h-7 w-32 rounded-md border border-input bg-transparent px-2 text-xs outline-none focus-visible:border-ring"
+            />
           </div>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {filteredCustom.map((e) => (
-              <button
-                key={e.id}
-                type="button"
-                disabled={atLimit}
-                onClick={() => onAdd(e.format)}
-                title={`:${e.name}:`}
-                className={cn(
-                  'flex size-9 items-center justify-center rounded-md border border-transparent bg-muted/40 transition-colors hover:bg-accent hover:text-accent-foreground',
-                  atLimit && 'cursor-not-allowed opacity-40 hover:bg-muted/40'
-                )}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={customEmojiUrl(e.id, e.animated)} alt={e.name} className="size-5" />
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Unicode 絵文字 */}
-      <div>
-        <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-          標準 (Unicode) 絵文字
-        </div>
-        <div className="space-y-2">
-          {UNICODE_EMOJI_SUGGESTIONS.map((cat) => (
-            <div key={cat.label}>
-              <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
-                {cat.label}
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {cat.emojis.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    disabled={atLimit}
-                    onClick={() => onAdd(emoji)}
-                    className={cn(
-                      'flex size-9 items-center justify-center rounded-md border border-transparent bg-muted/40 text-lg transition-colors hover:bg-accent hover:text-accent-foreground',
-                      atLimit && 'cursor-not-allowed opacity-40 hover:bg-muted/40'
-                    )}
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
+          {filteredCustom.length === 0 ? (
+            <div className="rounded-md border border-dashed border-input px-3 py-4 text-center text-xs text-muted-foreground">
+              利用可能なカスタム絵文字なし
             </div>
-          ))}
+          ) : (
+            <div className="flex max-h-72 flex-wrap gap-1.5 overflow-y-auto rounded-md border border-input p-2">
+              {filteredCustom.map((e) => (
+                <button
+                  key={e.id}
+                  type="button"
+                  disabled={atLimit}
+                  onClick={() => onAdd(e.format)}
+                  title={`:${e.name}:`}
+                  className={cn(
+                    'flex size-9 items-center justify-center rounded-md bg-muted/40 transition-colors hover:bg-accent',
+                    atLimit && 'cursor-not-allowed opacity-40 hover:bg-muted/40'
+                  )}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={customEmojiUrl(e.id, e.animated)} alt={e.name} className="size-5" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 全 Unicode 絵文字 (emoji-mart) */}
+        <div>
+          <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+            標準 (Unicode) 絵文字 — 検索 / カテゴリ閲覧
+          </div>
+          <div className={cn(atLimit && 'pointer-events-none opacity-40')}>
+            <EmojiMartPicker onSelect={onAdd} />
+          </div>
         </div>
       </div>
     </div>

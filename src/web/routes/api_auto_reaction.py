@@ -163,6 +163,63 @@ async def api_auto_reaction_delete(
     return JSONResponse({"ok": True})
 
 
+class _AutoReactionUpdateRequest(BaseModel):
+    emojis: list[str]
+
+
+@router.patch("/auto-reaction/{config_id}", response_model=None)
+async def api_auto_reaction_update(
+    request: Request,
+    config_id: int,
+    body: _AutoReactionUpdateRequest,
+    user: dict[str, Any] | None = Depends(get_current_user_jwt),
+    db: AsyncSession = Depends(_db.get_db),
+) -> JSONResponse:
+    if not user:
+        return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+
+    user_id = user.get("sub", "")
+    path = request.url.path
+
+    if _security.is_form_cooldown_active(user_id, path):
+        return JSONResponse({"detail": "Too many requests"}, status_code=429)
+
+    emojis = normalize_auto_reaction_emojis(body.emojis)
+    if not emojis:
+        return JSONResponse(
+            {"detail": "At least one emoji is required"}, status_code=422
+        )
+    if len(emojis) > MAX_AUTO_REACTION_EMOJIS:
+        return JSONResponse(
+            {"detail": f"At most {MAX_AUTO_REACTION_EMOJIS} emojis are allowed"},
+            status_code=422,
+        )
+
+    result = await db.execute(
+        select(AutoReactionConfig).where(AutoReactionConfig.id == config_id)
+    )
+    config = result.scalar_one_or_none()
+    if not config:
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+
+    config.emojis = encode_auto_reaction_emojis(emojis)
+    await db.commit()
+    _security.record_form_submit(user_id, path)
+    await db.refresh(config)
+    return JSONResponse(
+        {
+            "ok": True,
+            "config": {
+                "id": config.id,
+                "guild_id": config.guild_id,
+                "channel_id": config.channel_id,
+                "emojis": decode_auto_reaction_emojis(config.emojis),
+                "enabled": config.enabled,
+            },
+        }
+    )
+
+
 @router.patch("/auto-reaction/{config_id}/toggle", response_model=None)
 async def api_auto_reaction_toggle(
     request: Request,
