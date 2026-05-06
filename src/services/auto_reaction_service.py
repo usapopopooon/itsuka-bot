@@ -92,10 +92,12 @@ class ChannelAutoReaction:
 
 async def get_enabled_auto_reactions(
     session: AsyncSession,
-) -> dict[str, ChannelAutoReaction]:
-    """有効な設定の channel_id → (emojis, compiled pattern) の辞書。
+) -> dict[str, list[ChannelAutoReaction]]:
+    """有効な設定の channel_id → list[(emojis, compiled pattern)] の辞書。
 
     Cog の on_message ホットパスで参照する事前計算済みキャッシュ。
+    1 チャンネルに複数の設定 (例: pattern 違いで別の絵文字) を持てるため、
+    同一 channel_id のレコードはリストに集約する。
     """
     stmt = select(
         AutoReactionConfig.channel_id,
@@ -103,10 +105,12 @@ async def get_enabled_auto_reactions(
         AutoReactionConfig.pattern,
     ).where(AutoReactionConfig.enabled.is_(True))
     result = await session.execute(stmt)
-    return {
-        channel_id: ChannelAutoReaction(
-            emojis=decode_auto_reaction_emojis(emojis),
-            pattern=compile_pattern(pattern),
+    grouped: dict[str, list[ChannelAutoReaction]] = {}
+    for channel_id, emojis, pattern in result.all():
+        grouped.setdefault(channel_id, []).append(
+            ChannelAutoReaction(
+                emojis=decode_auto_reaction_emojis(emojis),
+                pattern=compile_pattern(pattern),
+            )
         )
-        for channel_id, emojis, pattern in result.all()
-    }
+    return grouped

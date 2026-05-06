@@ -22,18 +22,15 @@ class Base(DeclarativeBase):
 class AutoReactionConfig(Base):
     """指定チャンネルへの新規メッセージに自動でリアクションを付与する設定。
 
-    1ギルド内で複数チャンネルに別個の設定を持てる (channel_id ユニーク)。
+    同一 (guild_id, channel_id) に対して複数レコードを持てる。
+    例えば "おはよう" には ☀️、"おやすみ" には 🌙 のように
+    pattern を変えて複数の自動リアクションを 1 チャンネルに併設できる。
     emojis は JSON 配列文字列で複数の絵文字を保持する。
     Unicode 絵文字とカスタム絵文字 (例: ``<:name:123>`` / ``<a:name:123>``) の
     両方をそのまま要素として扱える。
     """
 
     __tablename__ = "auto_reaction_configs"
-    __table_args__ = (
-        UniqueConstraint(
-            "guild_id", "channel_id", name="uq_auto_reaction_guild_channel"
-        ),
-    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)

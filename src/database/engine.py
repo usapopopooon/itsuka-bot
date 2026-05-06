@@ -25,6 +25,14 @@ _LATE_ADDED_COLUMNS: list[tuple[str, str, str]] = [
 ]
 
 
+# 過去に存在したが廃止した制約。冪等に DROP する。
+# Postgres でのみ実行する (SQLite は本番では未使用 / テストは毎回新規作成)。
+_DROPPED_CONSTRAINTS: list[tuple[str, str]] = [
+    # 1チャンネルに複数の自動リアクション設定を持てるよう UNIQUE を解除。
+    ("auto_reaction_configs", "uq_auto_reaction_guild_channel"),
+]
+
+
 async def _migrate_late_added_columns() -> None:
     """``_LATE_ADDED_COLUMNS`` を冪等に追加する。
 
@@ -51,8 +59,25 @@ async def _migrate_late_added_columns() -> None:
                 )
 
 
+async def _drop_obsolete_constraints() -> None:
+    """``_DROPPED_CONSTRAINTS`` を冪等に DROP する (Postgres のみ)。
+
+    SQLite は ALTER TABLE での制約削除をサポートせず、また本番では
+    Postgres のみを使うのでテスト用 SQLite (毎回新規作成) ではそもそも
+    旧制約は発生しない。
+    """
+    dialect = engine.dialect.name
+    if dialect != "postgresql":
+        return
+    async with engine.begin() as conn:
+        for table, constraint in _DROPPED_CONSTRAINTS:
+            stmt = f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {constraint}"
+            await conn.execute(text(stmt))
+
+
 async def init_db() -> None:
     """テーブルを作成 + 既存テーブルに新規カラムを追加する。"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_late_added_columns()
+    await _drop_obsolete_constraints()

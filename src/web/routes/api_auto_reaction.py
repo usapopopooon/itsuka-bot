@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.web.db_helpers as _db
@@ -123,14 +122,7 @@ async def api_auto_reaction_create(
         pattern=pattern,
     )
     db.add(config)
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        return JSONResponse(
-            {"detail": "Duplicate guild_id + channel_id combination"},
-            status_code=409,
-        )
+    await db.commit()
 
     _security.record_form_submit(user_id, path)
     await db.refresh(config)

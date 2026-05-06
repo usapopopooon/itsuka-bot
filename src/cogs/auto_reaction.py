@@ -57,9 +57,10 @@ class AutoReactionCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        # channel_id → 事前パース済み絵文字 + コンパイル済み正規表現。
+        # channel_id → 事前パース済み絵文字 + コンパイル済み正規表現の list。
+        # 1 チャンネルに複数設定を持てるためリストで保持する。
         # None は「未初期化」を意味し on_message は何もしない。
-        self._configs: dict[str, _CachedConfig] | None = None
+        self._configs: dict[str, list[_CachedConfig]] | None = None
 
     async def cog_load(self) -> None:
         await self.refresh()
@@ -73,14 +74,17 @@ class AutoReactionCog(commands.Cog):
     async def refresh(self) -> None:
         """キャッシュを即時更新する。"""
         async with async_session() as session:
-            raw_map: dict[str, ChannelAutoReaction] = await get_enabled_auto_reactions(
-                session
-            )
+            raw_map: dict[
+                str, list[ChannelAutoReaction]
+            ] = await get_enabled_auto_reactions(session)
         self._configs = {
-            cid: _CachedConfig(
-                emojis=_parse_emojis(record.emojis), pattern=record.pattern
-            )
-            for cid, record in raw_map.items()
+            cid: [
+                _CachedConfig(
+                    emojis=_parse_emojis(record.emojis), pattern=record.pattern
+                )
+                for record in records
+            ]
+            for cid, records in raw_map.items()
         }
 
     @commands.Cog.listener()
@@ -96,14 +100,31 @@ class AutoReactionCog(commands.Cog):
         if self._configs is None:
             return
 
-        config = self._configs.get(str(message.channel.id))
-        if config is None or not config.emojis:
+        configs = self._configs.get(str(message.channel.id))
+        if not configs:
             return
 
-        if config.pattern is not None and not config.pattern.search(message.content):
-            return
+        # 同一チャンネルに複数設定がある場合、それぞれ独立に pattern を
+        # 評価し、マッチした設定の絵文字を集約する。複数設定が同じ絵文字を
+        # 含むケースに備えて重複を排除する (Discord は同じ絵文字を 2 回
+        # 付けようとすると 4xx を返すため)。
+        seen: set[str] = set()
+        emojis_to_add: list[discord.PartialEmoji] = []
+        for config in configs:
+            if not config.emojis:
+                continue
+            if config.pattern is not None and not config.pattern.search(
+                message.content
+            ):
+                continue
+            for emoji in config.emojis:
+                key = str(emoji)
+                if key in seen:
+                    continue
+                seen.add(key)
+                emojis_to_add.append(emoji)
 
-        for emoji in config.emojis:
+        for emoji in emojis_to_add:
             try:
                 await message.add_reaction(emoji)
             except discord.HTTPException:
