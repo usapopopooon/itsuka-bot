@@ -62,6 +62,10 @@ class AutoReactionCog(commands.Cog):
         # 1 チャンネルに複数設定を持てるためリストで保持する。
         # None は「未初期化」を意味し on_message は何もしない。
         self._configs: dict[str, list[_CachedConfig]] | None = None
+        # メッセージ連投時、複数 on_message が並行して add_reaction を発射すると
+        # クライアント描画が再び取りこぼすため、リアクション付与処理全体を
+        # グローバルに直列化する。順番待ちで反応が遅れるのは許容。
+        self._reaction_lock = asyncio.Lock()
 
     async def cog_load(self) -> None:
         await self.refresh()
@@ -129,20 +133,22 @@ class AutoReactionCog(commands.Cog):
         # ゲートウェイの MESSAGE_REACTION_ADD を短時間に連続受信すると一部の
         # 描画を取りこぼし、リロードするまで自分にだけリアクションが見えない
         # 現象がある。送信間隔を空けてクライアントの描画キューに余裕を持たせる。
-        for i, emoji in enumerate(emojis_to_add):
-            if i > 0:
-                await asyncio.sleep(0.5)
-            try:
-                await message.add_reaction(emoji)
-            except discord.HTTPException:
-                # 権限不足や絵文字未参加など実運用で起こりうる失敗を warning で
-                # 出していたが、頻発時にログを汚すので INFO へ落とす。
-                logger.info(
-                    "AutoReaction: Failed to add %r to message %s in channel %s",
-                    emoji,
-                    message.id,
-                    message.channel.id,
-                )
+        # メッセージ連投時にも並行発射しないよう全体をロックで直列化する。
+        async with self._reaction_lock:
+            for i, emoji in enumerate(emojis_to_add):
+                if i > 0:
+                    await asyncio.sleep(0.5)
+                try:
+                    await message.add_reaction(emoji)
+                except discord.HTTPException:
+                    # 権限不足や絵文字未参加など実運用で起こりうる失敗を warning
+                    # で出していたが、頻発時にログを汚すので INFO へ落とす。
+                    logger.info(
+                        "AutoReaction: Failed to add %r to message %s in channel %s",
+                        emoji,
+                        message.id,
+                        message.channel.id,
+                    )
 
     @tasks.loop(minutes=1)
     async def _refresh_cache(self) -> None:
