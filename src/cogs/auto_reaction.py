@@ -157,6 +157,12 @@ class AutoReactionCog(commands.Cog):
         if not to_add and not to_remove:
             return
 
+        bot_user = self.bot.user
+        if bot_user is None:
+            # ログイン前は user が None。on_message が来る前に ready するので
+            # 通常は到達しないが、型上の None を消して remove_reaction を通す。
+            return
+
         # サーバ側にはリアクションは正しく永続化されるが、Discord クライアントが
         # ゲートウェイの MESSAGE_REACTION_ADD/REMOVE を短時間に連続受信すると
         # 一部の描画を取りこぼし、リロードするまで自分にだけリアクションが見えない
@@ -164,31 +170,31 @@ class AutoReactionCog(commands.Cog):
         # メッセージ連投時にも並行発射しないよう全体をロックで直列化する。
         async with self._reaction_lock:
             first = True
-            for emoji in to_add:
+            for add_emoji in to_add:
                 if not first:
                     await asyncio.sleep(0.5)
                 first = False
                 try:
-                    await message.add_reaction(emoji)
+                    await message.add_reaction(add_emoji)
                 except discord.HTTPException:
                     # 権限不足や絵文字未参加など実運用で起こりうる失敗を warning
                     # で出していたが、頻発時にログを汚すので INFO へ落とす。
                     logger.info(
                         "AutoReaction: Failed to add %r to message %s in channel %s",
-                        emoji,
+                        add_emoji,
                         message.id,
                         message.channel.id,
                     )
-            for emoji in to_remove:
+            for rm_emoji in to_remove:
                 if not first:
                     await asyncio.sleep(0.5)
                 first = False
                 try:
-                    await message.remove_reaction(emoji, self.bot.user)
+                    await message.remove_reaction(rm_emoji, bot_user)
                 except discord.HTTPException:
                     logger.info(
                         "AutoReaction: Failed to remove %r from message %s in %s",
-                        emoji,
+                        rm_emoji,
                         message.id,
                         message.channel.id,
                     )
