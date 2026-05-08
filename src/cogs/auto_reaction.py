@@ -1,7 +1,8 @@
 """Auto Reaction cog.
 
 設定済みチャンネルへの新規メッセージへ、登録済みの絵文字を自動でリアクション
-として付与する。以下は対象外:
+として付与する。メッセージ編集時にも再評価し、新たにマッチした分は追加、
+マッチしなくなった分は bot が付けたリアクションのみ削除する。以下は対象外:
 
 - Bot 自身および他の Bot の発言 (``author.bot``)
 - Webhook 経由の投稿 (GitHub / Zapier 等; ``message.webhook_id``)
@@ -94,6 +95,19 @@ class AutoReactionCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
+        await self._reconcile(message)
+
+    @commands.Cog.listener()
+    async def on_message_edit(
+        self, before: discord.Message, after: discord.Message
+    ) -> None:
+        # embed 展開・ピン状態変更などでも on_message_edit は飛ぶので、本文が
+        # 変わっていない編集はスキップする。
+        if before.content == after.content:
+            return
+        await self._reconcile(after)
+
+    async def _reconcile(self, message: discord.Message) -> None:
         if not message.guild or not message.author:
             return
         if message.author.bot:
@@ -113,8 +127,7 @@ class AutoReactionCog(commands.Cog):
         # 評価し、マッチした設定の絵文字を集約する。複数設定が同じ絵文字を
         # 含むケースに備えて重複を排除する (Discord は同じ絵文字を 2 回
         # 付けようとすると 4xx を返すため)。
-        seen: set[str] = set()
-        emojis_to_add: list[discord.PartialEmoji] = []
+        desired_by_key: dict[str, discord.PartialEmoji] = {}
         for config in configs:
             if not config.emojis:
                 continue
@@ -124,20 +137,37 @@ class AutoReactionCog(commands.Cog):
                 continue
             for emoji in config.emojis:
                 key = str(emoji)
-                if key in seen:
+                if key in desired_by_key:
                     continue
-                seen.add(key)
-                emojis_to_add.append(emoji)
+                desired_by_key[key] = emoji
+
+        # 既に bot が付けているリアクションを把握し、足りない分を追加・
+        # マッチしなくなった分を削除する (編集で本文がパターン外れたケース)。
+        # Reaction.emoji は str | Emoji | PartialEmoji で、いずれも str() で
+        # PartialEmoji.from_str と同じ表記に正規化される。
+        bot_current_by_key: dict[str, discord.PartialEmoji | discord.Emoji | str] = {
+            str(r.emoji): r.emoji for r in message.reactions if r.me
+        }
+
+        to_add = [e for k, e in desired_by_key.items() if k not in bot_current_by_key]
+        to_remove = [
+            e for k, e in bot_current_by_key.items() if k not in desired_by_key
+        ]
+
+        if not to_add and not to_remove:
+            return
 
         # サーバ側にはリアクションは正しく永続化されるが、Discord クライアントが
-        # ゲートウェイの MESSAGE_REACTION_ADD を短時間に連続受信すると一部の
-        # 描画を取りこぼし、リロードするまで自分にだけリアクションが見えない
+        # ゲートウェイの MESSAGE_REACTION_ADD/REMOVE を短時間に連続受信すると
+        # 一部の描画を取りこぼし、リロードするまで自分にだけリアクションが見えない
         # 現象がある。送信間隔を空けてクライアントの描画キューに余裕を持たせる。
         # メッセージ連投時にも並行発射しないよう全体をロックで直列化する。
         async with self._reaction_lock:
-            for i, emoji in enumerate(emojis_to_add):
-                if i > 0:
+            first = True
+            for emoji in to_add:
+                if not first:
                     await asyncio.sleep(0.5)
+                first = False
                 try:
                     await message.add_reaction(emoji)
                 except discord.HTTPException:
@@ -145,6 +175,19 @@ class AutoReactionCog(commands.Cog):
                     # で出していたが、頻発時にログを汚すので INFO へ落とす。
                     logger.info(
                         "AutoReaction: Failed to add %r to message %s in channel %s",
+                        emoji,
+                        message.id,
+                        message.channel.id,
+                    )
+            for emoji in to_remove:
+                if not first:
+                    await asyncio.sleep(0.5)
+                first = False
+                try:
+                    await message.remove_reaction(emoji, self.bot.user)
+                except discord.HTTPException:
+                    logger.info(
+                        "AutoReaction: Failed to remove %r from message %s in channel %s",
                         emoji,
                         message.id,
                         message.channel.id,
