@@ -187,7 +187,7 @@ class AutoReactionCog(commands.Cog):
                     await message.remove_reaction(emoji, self.bot.user)
                 except discord.HTTPException:
                     logger.info(
-                        "AutoReaction: Failed to remove %r from message %s in channel %s",
+                        "AutoReaction: Failed to remove %r from message %s in %s",
                         emoji,
                         message.id,
                         message.channel.id,
