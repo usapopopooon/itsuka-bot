@@ -16,6 +16,7 @@ JSON デコード・絵文字パース・正規表現コンパイルを全て事
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 
@@ -124,7 +125,12 @@ class AutoReactionCog(commands.Cog):
                 seen.add(key)
                 emojis_to_add.append(emoji)
 
-        for emoji in emojis_to_add:
+        # Discord はリアクション追加 API を短時間に連射すると 200/204 を返しつつ
+        # 永続化しない、または一瞬付いて消える挙動を取ることがあるため、
+        # 各リクエスト間に明示的に間隔を空ける。
+        for i, emoji in enumerate(emojis_to_add):
+            if i > 0:
+                await asyncio.sleep(0.25)
             try:
                 await message.add_reaction(emoji)
             except discord.HTTPException:
