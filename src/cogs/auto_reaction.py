@@ -125,12 +125,13 @@ class AutoReactionCog(commands.Cog):
                 seen.add(key)
                 emojis_to_add.append(emoji)
 
-        # Discord はリアクション追加 API を短時間に連射すると 200/204 を返しつつ
-        # 永続化しない、または一瞬付いて消える挙動を取ることがあるため、
-        # 各リクエスト間に明示的に間隔を空ける。
+        # サーバ側にはリアクションは正しく永続化されるが、Discord クライアントが
+        # ゲートウェイの MESSAGE_REACTION_ADD を短時間に連続受信すると一部の
+        # 描画を取りこぼし、リロードするまで自分にだけリアクションが見えない
+        # 現象がある。送信間隔を空けてクライアントの描画キューに余裕を持たせる。
         for i, emoji in enumerate(emojis_to_add):
             if i > 0:
-                await asyncio.sleep(0.25)
+                await asyncio.sleep(0.5)
             try:
                 await message.add_reaction(emoji)
             except discord.HTTPException:
