@@ -13,6 +13,10 @@
 ホットパス最適化: on_message は per-message に呼ばれるため DB アクセス・
 JSON デコード・絵文字パース・正規表現コンパイルを全て事前計算してキャッシュ
 する。キャッシュは 1 分ごと、または明示的な refresh 呼び出しで更新する。
+
+セーフティネット: ``on_message`` を取りこぼすケース (Discord 障害復帰直後、
+ゲートウェイ切断中の投稿、起動前の投稿等) に備え、キャッシュ更新と同じ周期
+で各チャンネルの直近メッセージを ``_reconcile`` で再点検する。
 """
 
 from __future__ import annotations
@@ -43,6 +47,10 @@ _REACTABLE_MESSAGE_TYPES: frozenset[discord.MessageType] = frozenset(
     {discord.MessageType.default, discord.MessageType.reply}
 )
 
+# 1 チャンネルあたり何件遡って再点検するか。多すぎても直近以外は実用上付ける
+# 必要が無く、API コストが増えるだけなので 50 件に制限する。
+_SWEEP_HISTORY_LIMIT = 50
+
 
 class _CachedConfig:
     __slots__ = ("emojis", "pattern")
@@ -70,12 +78,12 @@ class AutoReactionCog(commands.Cog):
 
     async def cog_load(self) -> None:
         await self.refresh()
-        self._refresh_cache.start()
-        logger.info("AutoReaction cog loaded, cache refresh loop started")
+        self._refresh_and_sweep.start()
+        logger.info("AutoReaction cog loaded, refresh/sweep loop started")
 
     async def cog_unload(self) -> None:
-        if self._refresh_cache.is_running():
-            self._refresh_cache.cancel()
+        if self._refresh_and_sweep.is_running():
+            self._refresh_and_sweep.cancel()
 
     async def refresh(self) -> None:
         """キャッシュを即時更新する。"""
@@ -199,15 +207,54 @@ class AutoReactionCog(commands.Cog):
                         message.channel.id,
                     )
 
+    async def sweep_recent_messages(self) -> None:
+        """設定済みチャンネルの直近メッセージを再点検する。
+
+        ``on_message`` を取りこぼすシナリオ (Discord 障害、ゲートウェイ
+        瞬断、起動前の投稿等) に備えたセーフティネット。各チャンネルにつき
+        ``_SWEEP_HISTORY_LIMIT`` 件分を ``_reconcile`` に通すだけで、新規
+        分は付与・取りこぼしは補完される。既に整合済みのメッセージは
+        ``_reconcile`` 内の早期 return で API を呼ばない。
+        """
+        if self._configs is None:
+            return
+        for channel_id in list(self._configs.keys()):
+            try:
+                channel_id_int = int(channel_id)
+            except ValueError:
+                continue
+            channel = self.bot.get_channel(channel_id_int)
+            if channel is None:
+                # キャッシュに無い (削除済み / 未参加 / 部分キャッシュ) は
+                # スキップ。次回 sweep で復帰する想定。
+                continue
+            if not isinstance(channel, discord.abc.Messageable):
+                # CategoryChannel / ForumChannel など history() を持たない
+                # ものは無視。
+                continue
+            try:
+                async for message in channel.history(limit=_SWEEP_HISTORY_LIMIT):
+                    await self._reconcile(message)
+            except discord.HTTPException:
+                logger.info(
+                    "AutoReaction sweep: failed to read history for channel %s",
+                    channel_id_int,
+                )
+
     @tasks.loop(minutes=1)
-    async def _refresh_cache(self) -> None:
+    async def _refresh_and_sweep(self) -> None:
         try:
             await self.refresh()
         except Exception:
             logger.exception("AutoReaction: cache refresh failed")
+        try:
+            await self.sweep_recent_messages()
+        except Exception:
+            logger.exception("AutoReaction: sweep failed")
 
-    @_refresh_cache.before_loop
-    async def _before_refresh_cache(self) -> None:
+    @_refresh_and_sweep.before_loop
+    async def _before_refresh_and_sweep(self) -> None:
+        # 起動直後 / 再接続直後にも sweep を走らせるため ready を待つ。
         await self.bot.wait_until_ready()
 
 
