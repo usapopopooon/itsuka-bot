@@ -22,6 +22,10 @@ __all__ = [
     "MAX_MILESTONE_TEXT_LENGTH",
     "MAX_MILESTONE_DELETE_AFTER_SECONDS",
     "MAX_MILESTONE_PATTERN_LENGTH",
+    "CONDITION_DAILY_STREAK",
+    "CONDITION_CONSECUTIVE_POSTS",
+    "CONSECUTIVE_NOTIFY_EVERY_TIME",
+    "CONSECUTIVE_NOTIFY_PER_USER_PER_DAY",
     "ChannelMessageMilestone",
     "compile_pattern",
     "delete_message_milestone_state",
@@ -46,6 +50,10 @@ MAX_MILESTONE_TEXT_LENGTH = 4096
 MAX_MILESTONE_MESSAGE_LENGTH = 2000
 MAX_MILESTONE_DELETE_AFTER_SECONDS = 300
 MAX_MILESTONE_PATTERN_LENGTH = 500
+CONDITION_DAILY_STREAK = "daily_streak"
+CONDITION_CONSECUTIVE_POSTS = "consecutive_posts"
+CONSECUTIVE_NOTIFY_EVERY_TIME = "none"
+CONSECUTIVE_NOTIFY_PER_USER_PER_DAY = "per_user_per_day"
 _TOKYO = ZoneInfo("Asia/Tokyo")
 
 
@@ -64,6 +72,8 @@ class ChannelMessageMilestone:
     embed_color: int | None
     delete_after_seconds: int | None
     backfill_completed: bool
+    consecutive_notification_limit: str
+    consecutive_notification_daily_limit: int
 
 
 @dataclass(frozen=True)
@@ -75,6 +85,7 @@ class MilestoneProgressResult:
     crossed_daily_goal: bool = False
     reward_pending: bool = False
     consecutive_count: int = 0
+    notification_limited: bool = False
 
 
 @dataclass(frozen=True)
@@ -177,6 +188,29 @@ def message_milestone_date(created_at: datetime | None) -> date:
     return source.astimezone(_TOKYO).date()
 
 
+def _normalize_positive_count(value: int | None) -> int:
+    return max(value or 1, 1)
+
+
+def _is_consecutive_notification_limited(
+    progress: MessageMilestoneProgress, *, today: date, daily_limit: int
+) -> bool:
+    return (
+        progress.consecutive_notification_date == today
+        and progress.consecutive_notification_count >= daily_limit
+    )
+
+
+def _mark_consecutive_notification_sent(
+    progress: MessageMilestoneProgress, *, today: date
+) -> None:
+    if progress.consecutive_notification_date == today:
+        progress.consecutive_notification_count += 1
+    else:
+        progress.consecutive_notification_date = today
+        progress.consecutive_notification_count = 1
+
+
 async def get_enabled_message_milestones(
     session: AsyncSession,
 ) -> dict[str, list[ChannelMessageMilestone]]:
@@ -203,6 +237,11 @@ async def get_enabled_message_milestones(
                 embed_color=config.embed_color,
                 delete_after_seconds=config.delete_after_seconds,
                 backfill_completed=config.backfill_completed,
+                consecutive_notification_limit=config.consecutive_notification_limit
+                or CONSECUTIVE_NOTIFY_EVERY_TIME,
+                consecutive_notification_daily_limit=_normalize_positive_count(
+                    config.consecutive_notification_daily_limit
+                ),
             )
         )
     return grouped
@@ -234,6 +273,34 @@ async def mark_message_milestone_message_processed(
     return True
 
 
+async def _get_or_create_message_milestone_progress(
+    session: AsyncSession,
+    *,
+    config_id: int,
+    user_id: str,
+    counted_date: date | None = None,
+) -> MessageMilestoneProgress:
+    result = await session.execute(
+        select(MessageMilestoneProgress).where(
+            MessageMilestoneProgress.config_id == config_id,
+            MessageMilestoneProgress.user_id == user_id,
+        )
+    )
+    progress = result.scalar_one_or_none()
+    if progress is None:
+        progress = MessageMilestoneProgress(
+            config_id=config_id,
+            user_id=user_id,
+            last_counted_date=counted_date,
+            daily_count=0,
+            streak_days=0,
+            reward_pending=False,
+            reward_sent=False,
+        )
+        session.add(progress)
+    return progress
+
+
 async def record_message_and_get_reward(
     session: AsyncSession,
     *,
@@ -258,24 +325,9 @@ async def record_message_and_get_reward(
     today = message_milestone_date(created_at)
     yesterday = today - timedelta(days=1)
 
-    result = await session.execute(
-        select(MessageMilestoneProgress).where(
-            MessageMilestoneProgress.config_id == config.id,
-            MessageMilestoneProgress.user_id == user_id,
-        )
+    progress = await _get_or_create_message_milestone_progress(
+        session, config_id=config.id, user_id=user_id, counted_date=today
     )
-    progress = result.scalar_one_or_none()
-    if progress is None:
-        progress = MessageMilestoneProgress(
-            config_id=config.id,
-            user_id=user_id,
-            last_counted_date=today,
-            daily_count=0,
-            streak_days=0,
-            reward_pending=False,
-            reward_sent=False,
-        )
-        session.add(progress)
 
     if progress.last_counted_date == today:
         previous_count = progress.daily_count
@@ -323,6 +375,7 @@ async def record_consecutive_message_and_get_reward(
     *,
     config: ChannelMessageMilestone,
     user_id: str,
+    created_at: datetime | None,
     message_id: str | None = None,
 ) -> MilestoneProgressResult:
     if message_id is not None:
@@ -357,15 +410,32 @@ async def record_consecutive_message_and_get_reward(
         db_config.consecutive_count = 1
         db_config.consecutive_reward_sent = False
 
+    today = message_milestone_date(created_at)
     should_send = db_config.consecutive_count >= config.daily_required_count
+    notification_limited = False
+    if should_send and config.consecutive_notification_limit == (
+        CONSECUTIVE_NOTIFY_PER_USER_PER_DAY
+    ):
+        daily_limit = _normalize_positive_count(
+            config.consecutive_notification_daily_limit
+        )
+        progress = await _get_or_create_message_milestone_progress(
+            session, config_id=config.id, user_id=user_id
+        )
+        notification_limited = _is_consecutive_notification_limited(
+            progress, today=today, daily_limit=daily_limit
+        )
+        should_send = not notification_limited
+
     await session.commit()
     return MilestoneProgressResult(
         should_send=should_send,
         streak_days=0,
         daily_count=db_config.consecutive_count,
         crossed_daily_goal=should_send,
-        reward_pending=should_send,
+        reward_pending=db_config.consecutive_count >= config.daily_required_count,
         consecutive_count=db_config.consecutive_count,
+        notification_limited=notification_limited,
     )
 
 
@@ -424,7 +494,11 @@ async def mark_message_milestone_reward_sent(
 
 
 async def mark_message_milestone_consecutive_reward_sent(
-    session: AsyncSession, *, config_id: int
+    session: AsyncSession,
+    *,
+    config_id: int,
+    user_id: str,
+    created_at: datetime | None,
 ) -> None:
     result = await session.execute(
         select(MessageMilestoneConfig).where(MessageMilestoneConfig.id == config_id)
@@ -433,4 +507,10 @@ async def mark_message_milestone_consecutive_reward_sent(
     if config is None:
         return
     config.consecutive_reward_sent = True
+    if config.consecutive_notification_limit == CONSECUTIVE_NOTIFY_PER_USER_PER_DAY:
+        today = message_milestone_date(created_at)
+        progress = await _get_or_create_message_milestone_progress(
+            session, config_id=config_id, user_id=user_id
+        )
+        _mark_consecutive_notification_sent(progress, today=today)
     await session.commit()

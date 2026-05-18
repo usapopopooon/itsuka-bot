@@ -18,6 +18,7 @@ from src.services.message_milestone_service import (
     ChannelMessageMilestone,
     MilestoneTemplateContext,
     delete_message_milestone_state,
+    mark_message_milestone_consecutive_reward_sent,
     mark_message_milestone_reward_sent,
     normalize_embed_color,
     record_consecutive_message_and_get_reward,
@@ -42,6 +43,8 @@ def _config(*, daily: int = 2, days: int = 2) -> ChannelMessageMilestone:
         embed_color=None,
         delete_after_seconds=None,
         backfill_completed=True,
+        consecutive_notification_limit="none",
+        consecutive_notification_daily_limit=1,
     )
 
 
@@ -195,16 +198,16 @@ async def test_record_consecutive_message_sends_after_same_user_reaches_goal(
         )
         await session.commit()
         first = await record_consecutive_message_and_get_reward(
-            session, config=config, user_id="u1", message_id="m1"
+            session, config=config, user_id="u1", created_at=None, message_id="m1"
         )
         second = await record_consecutive_message_and_get_reward(
-            session, config=config, user_id="u1", message_id="m2"
+            session, config=config, user_id="u1", created_at=None, message_id="m2"
         )
         third = await record_consecutive_message_and_get_reward(
-            session, config=config, user_id="u1", message_id="m3"
+            session, config=config, user_id="u1", created_at=None, message_id="m3"
         )
         fourth = await record_consecutive_message_and_get_reward(
-            session, config=config, user_id="u1", message_id="m4"
+            session, config=config, user_id="u1", created_at=None, message_id="m4"
         )
 
     assert not first.should_send
@@ -238,14 +241,134 @@ async def test_record_consecutive_message_resets_when_user_changes(
         )
         await session.commit()
         await record_consecutive_message_and_get_reward(
-            session, config=config, user_id="u1", message_id="m1"
+            session, config=config, user_id="u1", created_at=None, message_id="m1"
         )
         reset = await record_consecutive_message_and_get_reward(
-            session, config=config, user_id="u2", message_id="m2"
+            session, config=config, user_id="u2", created_at=None, message_id="m2"
         )
 
     assert not reset.should_send
     assert reset.consecutive_count == 1
+
+
+async def test_record_consecutive_message_can_limit_notifications_once_per_user_day(
+    session_factory,
+) -> None:
+    config = ChannelMessageMilestone(
+        **{
+            **_config(daily=2, days=1).__dict__,
+            "condition_type": "consecutive_posts",
+            "consecutive_notification_limit": "per_user_per_day",
+        }
+    )
+    day1 = datetime(2026, 5, 18, 1, tzinfo=UTC)
+    day2 = datetime(2026, 5, 19, 1, tzinfo=UTC)
+
+    async with session_factory() as session:
+        session.add(
+            MessageMilestoneConfig(
+                id=config.id,
+                guild_id="g1",
+                channel_id=config.channel_id,
+                condition_type=config.condition_type,
+                consecutive_notification_limit=config.consecutive_notification_limit,
+                consecutive_notification_daily_limit=config.consecutive_notification_daily_limit,
+                daily_required_count=config.daily_required_count,
+                required_days=1,
+                response_type="plain",
+                message_content="done",
+                backfill_completed=True,
+            )
+        )
+        await session.commit()
+        await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", created_at=day1, message_id="m1"
+        )
+        first_notice = await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", created_at=day1, message_id="m2"
+        )
+        await mark_message_milestone_consecutive_reward_sent(
+            session, config_id=config.id, user_id="u1", created_at=day1
+        )
+        same_day = await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", created_at=day1, message_id="m3"
+        )
+        next_day = await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", created_at=day2, message_id="m4"
+        )
+
+    assert first_notice.should_send
+    assert not same_day.should_send
+    assert same_day.notification_limited
+    assert next_day.should_send
+    assert next_day.consecutive_count == 4
+
+
+async def test_record_consecutive_message_can_limit_notifications_n_times_per_user_day(
+    session_factory,
+) -> None:
+    config = ChannelMessageMilestone(
+        **{
+            **_config(daily=2, days=1).__dict__,
+            "condition_type": "consecutive_posts",
+            "consecutive_notification_limit": "per_user_per_day",
+            "consecutive_notification_daily_limit": 2,
+        }
+    )
+    day1 = datetime(2026, 5, 18, 1, tzinfo=UTC)
+
+    async with session_factory() as session:
+        session.add(
+            MessageMilestoneConfig(
+                id=config.id,
+                guild_id="g1",
+                channel_id=config.channel_id,
+                condition_type=config.condition_type,
+                consecutive_notification_limit=config.consecutive_notification_limit,
+                consecutive_notification_daily_limit=config.consecutive_notification_daily_limit,
+                daily_required_count=config.daily_required_count,
+                required_days=1,
+                response_type="plain",
+                message_content="done",
+                backfill_completed=True,
+            )
+        )
+        await session.commit()
+        await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", created_at=day1, message_id="m1"
+        )
+        first_notice = await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", created_at=day1, message_id="m2"
+        )
+        await mark_message_milestone_consecutive_reward_sent(
+            session, config_id=config.id, user_id="u1", created_at=day1
+        )
+        second_notice = await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", created_at=day1, message_id="m3"
+        )
+        await mark_message_milestone_consecutive_reward_sent(
+            session, config_id=config.id, user_id="u1", created_at=day1
+        )
+        over_limit = await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", created_at=day1, message_id="m4"
+        )
+
+    assert first_notice.should_send
+    assert second_notice.should_send
+    assert not over_limit.should_send
+    assert over_limit.notification_limited
+    async with session_factory() as session:
+        progress = (
+            await session.execute(
+                select(MessageMilestoneProgress).where(
+                    MessageMilestoneProgress.config_id == config.id,
+                    MessageMilestoneProgress.user_id == "u1",
+                )
+            )
+        ).scalar_one()
+
+    assert progress.daily_count == 0
+    assert progress.consecutive_notification_count == 2
 
 
 def test_normalize_embed_color_accepts_hash_hex() -> None:

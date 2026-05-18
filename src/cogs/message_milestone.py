@@ -12,12 +12,15 @@ from discord.ext import commands, tasks
 
 from src.database.engine import async_session
 from src.services.message_milestone_service import (
+    CONDITION_CONSECUTIVE_POSTS,
+    CONDITION_DAILY_STREAK,
     MAX_MILESTONE_MESSAGE_LENGTH,
     MAX_MILESTONE_TEXT_LENGTH,
     ChannelMessageMilestone,
     MilestoneTemplateContext,
     get_enabled_message_milestones,
     mark_message_milestone_backfill_completed,
+    mark_message_milestone_consecutive_reward_sent,
     mark_message_milestone_reward_sent,
     message_milestone_date,
     record_consecutive_message_and_get_reward,
@@ -100,7 +103,10 @@ class MessageMilestoneCog(commands.Cog):
             config
             for records in self._configs.values()
             for config in records
-            if config.condition_type == "daily_streak" and not config.backfill_completed
+            if (
+                config.condition_type == CONDITION_DAILY_STREAK
+                and not config.backfill_completed
+            )
         ]
         if pending:
             logger.info(
@@ -338,11 +344,12 @@ class MessageMilestoneCog(commands.Cog):
                     config.pattern.pattern if config.pattern else None,
                 )
                 try:
-                    if config.condition_type == "consecutive_posts":
+                    if config.condition_type == CONDITION_CONSECUTIVE_POSTS:
                         result = await record_consecutive_message_and_get_reward(
                             session,
                             config=config,
                             user_id=str(message.author.id),
+                            created_at=message.created_at,
                             message_id=str(message.id),
                         )
                     else:
@@ -363,7 +370,7 @@ class MessageMilestoneCog(commands.Cog):
                     "MessageMilestone: progress config=%s user=%s message=%s "
                     "condition=%s daily=%s/%s streak=%s/%s consecutive=%s/%s "
                     "crossed_daily_goal=%s "
-                    "reward_pending=%s duplicate=%s should_send=%s",
+                    "reward_pending=%s duplicate=%s limited=%s should_send=%s",
                     config.id,
                     message.author.id,
                     message.id,
@@ -377,6 +384,7 @@ class MessageMilestoneCog(commands.Cog):
                     result.crossed_daily_goal,
                     result.reward_pending,
                     result.duplicate,
+                    result.notification_limited,
                     result.should_send,
                 )
                 if result.duplicate:
@@ -398,7 +406,7 @@ class MessageMilestoneCog(commands.Cog):
                     )
                     current_count = (
                         result.consecutive_count
-                        if config.condition_type == "consecutive_posts"
+                        if config.condition_type == CONDITION_CONSECUTIVE_POSTS
                         else None
                     )
                     sent = await self._send_reward(
@@ -408,11 +416,18 @@ class MessageMilestoneCog(commands.Cog):
                         current_count=current_count,
                     )
                     if sent:
-                        if config.condition_type != "consecutive_posts":
+                        if config.condition_type != CONDITION_CONSECUTIVE_POSTS:
                             await mark_message_milestone_reward_sent(
                                 session,
                                 config_id=config.id,
                                 user_id=str(message.author.id),
+                            )
+                        else:
+                            await mark_message_milestone_consecutive_reward_sent(
+                                session,
+                                config_id=config.id,
+                                user_id=str(message.author.id),
+                                created_at=message.created_at,
                             )
                         logger.info(
                             "MessageMilestone: marked reward sent config=%s user=%s",

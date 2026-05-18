@@ -30,6 +30,8 @@ export interface MessageMilestoneConfig {
   guild_id: string
   channel_id: string
   condition_type: 'daily_streak' | 'consecutive_posts'
+  consecutive_notification_limit: 'none' | 'per_user_per_day'
+  consecutive_notification_daily_limit: number
   daily_required_count: number
   required_days: number
   pattern: string | null

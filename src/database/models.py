@@ -82,6 +82,12 @@ class MessageMilestoneConfig(Base):
     consecutive_reward_sent: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
+    consecutive_notification_limit: Mapped[str] = mapped_column(
+        String, default="none", nullable=False
+    )
+    consecutive_notification_daily_limit: Mapped[int] = mapped_column(
+        Integer, default=1, nullable=False
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
@@ -116,6 +122,12 @@ class MessageMilestoneProgress(Base):
     streak_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     reward_pending: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     reward_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    consecutive_notification_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True
+    )
+    consecutive_notification_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

@@ -33,7 +33,23 @@ _LATE_ADDED_COLUMNS: list[tuple[str, str, str]] = [
         "consecutive_reward_sent",
         "BOOLEAN DEFAULT FALSE",
     ),
+    (
+        "message_milestone_configs",
+        "consecutive_notification_limit",
+        "TEXT DEFAULT 'none'",
+    ),
+    (
+        "message_milestone_configs",
+        "consecutive_notification_daily_limit",
+        "INTEGER DEFAULT 1",
+    ),
     ("message_milestone_progress", "reward_pending", "BOOLEAN DEFAULT FALSE"),
+    ("message_milestone_progress", "consecutive_notification_date", "DATE"),
+    (
+        "message_milestone_progress",
+        "consecutive_notification_count",
+        "INTEGER DEFAULT 0",
+    ),
 ]
 
 

@@ -16,6 +16,10 @@ import src.web.db_helpers as _db
 import src.web.security as _security
 from src.database.models import MessageMilestoneConfig
 from src.services.message_milestone_service import (
+    CONDITION_CONSECUTIVE_POSTS,
+    CONDITION_DAILY_STREAK,
+    CONSECUTIVE_NOTIFY_EVERY_TIME,
+    CONSECUTIVE_NOTIFY_PER_USER_PER_DAY,
     MAX_MILESTONE_DELETE_AFTER_SECONDS,
     MAX_MILESTONE_MESSAGE_LENGTH,
     MAX_MILESTONE_TEXT_LENGTH,
@@ -29,6 +33,16 @@ from src.web.jwt_auth import get_current_user_jwt
 router = APIRouter(prefix="/api/v1", tags=["api-message-milestone"])
 logger = logging.getLogger(__name__)
 
+_CONDITION_TYPES = {CONDITION_DAILY_STREAK, CONDITION_CONSECUTIVE_POSTS}
+_CONSECUTIVE_NOTIFICATION_LIMITS = {
+    CONSECUTIVE_NOTIFY_EVERY_TIME,
+    CONSECUTIVE_NOTIFY_PER_USER_PER_DAY,
+}
+
+
+def _positive_count(value: int | None) -> int:
+    return max(value or 1, 1)
+
 
 def _serialize(config: MessageMilestoneConfig) -> dict[str, Any]:
     return {
@@ -36,6 +50,11 @@ def _serialize(config: MessageMilestoneConfig) -> dict[str, Any]:
         "guild_id": config.guild_id,
         "channel_id": config.channel_id,
         "condition_type": config.condition_type,
+        "consecutive_notification_limit": config.consecutive_notification_limit
+        or CONSECUTIVE_NOTIFY_EVERY_TIME,
+        "consecutive_notification_daily_limit": _positive_count(
+            config.consecutive_notification_daily_limit
+        ),
         "daily_required_count": config.daily_required_count,
         "required_days": config.required_days,
         "pattern": config.pattern,
@@ -55,7 +74,9 @@ def _serialize(config: MessageMilestoneConfig) -> dict[str, Any]:
 class _MessageMilestoneRequest(BaseModel):
     guild_id: str | None = None
     channel_id: str | None = None
-    condition_type: str = "daily_streak"
+    condition_type: str = CONDITION_DAILY_STREAK
+    consecutive_notification_limit: str = CONSECUTIVE_NOTIFY_EVERY_TIME
+    consecutive_notification_daily_limit: int = 1
     daily_required_count: int
     required_days: int
     pattern: str | None = None
@@ -70,11 +91,18 @@ class _MessageMilestoneRequest(BaseModel):
 async def _normalize_body(
     body: _MessageMilestoneRequest,
 ) -> tuple[dict[str, Any], str | None]:
-    if body.condition_type not in {"daily_streak", "consecutive_posts"}:
+    if body.condition_type not in _CONDITION_TYPES:
         return {}, "達成条件を選択してください"
+    if body.consecutive_notification_limit not in _CONSECUTIVE_NOTIFICATION_LIMITS:
+        return {}, "連続投稿の通知頻度を選択してください"
+    if body.consecutive_notification_limit == CONSECUTIVE_NOTIFY_PER_USER_PER_DAY and (
+        body.consecutive_notification_daily_limit < 1
+        or body.consecutive_notification_daily_limit > 999
+    ):
+        return {}, "1日あたりの通知回数は 1〜999 で指定してください"
     if body.daily_required_count < 1 or body.daily_required_count > 999:
         return {}, "投稿数は 1〜999 で指定してください"
-    if body.condition_type == "daily_streak" and (
+    if body.condition_type == CONDITION_DAILY_STREAK and (
         body.required_days < 1 or body.required_days > 365
     ):
         return {}, "継続日数は 1〜365 で指定してください"
@@ -114,11 +142,22 @@ async def _normalize_body(
     if body.response_type == "embed" and not (embed_title or embed_description):
         return {}, "埋め込みはタイトルか説明のどちらかを入力してください"
 
+    is_consecutive = body.condition_type == CONDITION_CONSECUTIVE_POSTS
+    daily_notification_limit = (
+        body.consecutive_notification_daily_limit
+        if is_consecutive
+        and (body.consecutive_notification_limit == CONSECUTIVE_NOTIFY_PER_USER_PER_DAY)
+        else 1
+    )
     return {
         "condition_type": body.condition_type,
+        "consecutive_notification_limit": body.consecutive_notification_limit
+        if is_consecutive
+        else CONSECUTIVE_NOTIFY_EVERY_TIME,
+        "consecutive_notification_daily_limit": daily_notification_limit,
         "daily_required_count": body.daily_required_count,
         "required_days": body.required_days
-        if body.condition_type == "daily_streak"
+        if body.condition_type == CONDITION_DAILY_STREAK
         else 1,
         "pattern": pattern,
         "response_type": body.response_type,
@@ -152,6 +191,10 @@ async def api_message_milestone_list(
                 "guild_id": config.guild_id,
                 "channel_id": config.channel_id,
                 "condition_type": config.condition_type,
+                "consecutive_notification_limit": config.consecutive_notification_limit,
+                "consecutive_notification_daily_limit": (
+                    config.consecutive_notification_daily_limit
+                ),
                 "enabled": config.enabled,
                 "pattern": config.pattern,
                 "backfill_completed": config.backfill_completed,
@@ -208,7 +251,7 @@ async def api_message_milestone_create(
         channel_id=body.channel_id,
         **values,
     )
-    config.backfill_completed = values["condition_type"] == "consecutive_posts"
+    config.backfill_completed = values["condition_type"] == CONDITION_CONSECUTIVE_POSTS
     db.add(config)
     await db.commit()
     _security.record_form_submit(user_id, path)
@@ -216,7 +259,7 @@ async def api_message_milestone_create(
     logger.info(
         "MessageMilestone API: created config=%s user=%s guild=%s channel=%s "
         "condition=%s required=%s days=%s pattern=%r response_type=%s "
-        "delete_after=%s",
+        "notification_limit=%s notification_daily_limit=%s delete_after=%s",
         config.id,
         user_id,
         config.guild_id,
@@ -226,6 +269,8 @@ async def api_message_milestone_create(
         config.required_days,
         config.pattern,
         config.response_type,
+        config.consecutive_notification_limit,
+        config.consecutive_notification_daily_limit,
         config.delete_after_seconds,
     )
     return JSONResponse({"ok": True, "config": _serialize(config)}, status_code=201)
@@ -272,14 +317,15 @@ async def api_message_milestone_update(
     )
     for key, value in values.items():
         setattr(config, key, value)
-    config.backfill_completed = values["condition_type"] == "consecutive_posts"
+    config.backfill_completed = values["condition_type"] == CONDITION_CONSECUTIVE_POSTS
     await db.commit()
     _security.record_form_submit(user_id, path)
     await db.refresh(config)
     logger.info(
         "MessageMilestone API: updated config=%s user=%s guild=%s channel=%s "
         "condition=%s required=%s days=%s pattern=%r response_type=%s "
-        "delete_after=%s backfill_completed=%s",
+        "notification_limit=%s notification_daily_limit=%s delete_after=%s "
+        "backfill_completed=%s",
         config.id,
         user_id,
         config.guild_id,
@@ -289,6 +335,8 @@ async def api_message_milestone_update(
         config.required_days,
         config.pattern,
         config.response_type,
+        config.consecutive_notification_limit,
+        config.consecutive_notification_daily_limit,
         config.delete_after_seconds,
         config.backfill_completed,
     )

@@ -27,6 +27,8 @@ def _config() -> ChannelMessageMilestone:
         embed_color=None,
         delete_after_seconds=None,
         backfill_completed=True,
+        consecutive_notification_limit="none",
+        consecutive_notification_daily_limit=1,
     )
 
 
