@@ -58,12 +58,12 @@ def test_rendered_reward_is_not_sendable_after_template_expands_too_long() -> No
     assert not cog._rendered_reward_is_sendable(config, rendered)
 
 
-def test_countdown_step_uses_coarser_updates_for_long_durations() -> None:
+def test_countdown_step_updates_every_second() -> None:
     cog = MessageMilestoneCog(MagicMock())
 
     assert cog._countdown_step_seconds(5) == 1
-    assert cog._countdown_step_seconds(30) == 5
-    assert cog._countdown_step_seconds(120) == 15
+    assert cog._countdown_step_seconds(30) == 1
+    assert cog._countdown_step_seconds(120) == 1
 
 
 def test_configs_for_message_matches_thread_parent_channel() -> None:

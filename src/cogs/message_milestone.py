@@ -563,11 +563,7 @@ class MessageMilestoneCog(commands.Cog):
         return f"{content}\n\n削除まで: {remaining}秒".strip()
 
     def _countdown_step_seconds(self, remaining: int) -> int:
-        if remaining <= 10:
-            return 1
-        if remaining <= 60:
-            return 5
-        return 15
+        return 1
 
     def _render_reward(
         self,
