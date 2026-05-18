@@ -8,10 +8,14 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models import MessageMilestoneConfig, MessageMilestoneProgress
+from src.database.models import (
+    MessageMilestoneConfig,
+    MessageMilestoneProcessedMessage,
+    MessageMilestoneProgress,
+)
 
 __all__ = [
     "MAX_MILESTONE_MESSAGE_LENGTH",
@@ -20,12 +24,17 @@ __all__ = [
     "MAX_MILESTONE_PATTERN_LENGTH",
     "ChannelMessageMilestone",
     "compile_pattern",
+    "delete_message_milestone_state",
     "MilestoneProgressResult",
     "MilestoneTemplateContext",
     "get_enabled_message_milestones",
+    "is_message_milestone_message_processed",
     "normalize_embed_color",
     "normalize_milestone_text",
     "mark_message_milestone_reward_sent",
+    "mark_message_milestone_backfill_completed",
+    "mark_message_milestone_message_processed",
+    "message_milestone_date",
     "record_message_and_get_reward",
     "render_milestone_template",
     "validate_pattern",
@@ -41,6 +50,7 @@ _TOKYO = ZoneInfo("Asia/Tokyo")
 @dataclass(frozen=True)
 class ChannelMessageMilestone:
     id: int
+    channel_id: str
     daily_required_count: int
     required_days: int
     pattern: re.Pattern[str] | None
@@ -50,6 +60,7 @@ class ChannelMessageMilestone:
     embed_description: str | None
     embed_color: int | None
     delete_after_seconds: int | None
+    backfill_completed: bool
 
 
 @dataclass(frozen=True)
@@ -141,7 +152,7 @@ def normalize_embed_color(raw: str | None) -> int | None:
     return color
 
 
-def _message_date(created_at: datetime | None) -> date:
+def message_milestone_date(created_at: datetime | None) -> date:
     source = created_at or datetime.now(UTC)
     if source.tzinfo is None:
         source = source.replace(tzinfo=UTC)
@@ -162,6 +173,7 @@ async def get_enabled_message_milestones(
         grouped.setdefault(config.channel_id, []).append(
             ChannelMessageMilestone(
                 id=config.id,
+                channel_id=config.channel_id,
                 daily_required_count=config.daily_required_count,
                 required_days=config.required_days,
                 pattern=compile_pattern(config.pattern),
@@ -171,9 +183,36 @@ async def get_enabled_message_milestones(
                 embed_description=config.embed_description,
                 embed_color=config.embed_color,
                 delete_after_seconds=config.delete_after_seconds,
+                backfill_completed=config.backfill_completed,
             )
         )
     return grouped
+
+
+async def is_message_milestone_message_processed(
+    session: AsyncSession, *, config_id: int, message_id: str
+) -> bool:
+    result = await session.execute(
+        select(MessageMilestoneProcessedMessage.id).where(
+            MessageMilestoneProcessedMessage.config_id == config_id,
+            MessageMilestoneProcessedMessage.message_id == message_id,
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def mark_message_milestone_message_processed(
+    session: AsyncSession, *, config_id: int, message_id: str
+) -> bool:
+    if await is_message_milestone_message_processed(
+        session, config_id=config_id, message_id=message_id
+    ):
+        return False
+    session.add(
+        MessageMilestoneProcessedMessage(config_id=config_id, message_id=message_id)
+    )
+    await session.flush()
+    return True
 
 
 async def record_message_and_get_reward(
@@ -182,8 +221,21 @@ async def record_message_and_get_reward(
     config: ChannelMessageMilestone,
     user_id: str,
     created_at: datetime | None,
+    message_id: str | None = None,
 ) -> MilestoneProgressResult:
-    today = _message_date(created_at)
+    if message_id is not None:
+        was_new = await mark_message_milestone_message_processed(
+            session, config_id=config.id, message_id=message_id
+        )
+        if not was_new:
+            await session.commit()
+            return MilestoneProgressResult(
+                should_send=False,
+                streak_days=0,
+                daily_count=0,
+            )
+
+    today = message_milestone_date(created_at)
     yesterday = today - timedelta(days=1)
 
     result = await session.execute(
@@ -241,6 +293,35 @@ async def record_message_and_get_reward(
         should_send=should_send,
         streak_days=progress.streak_days,
         daily_count=progress.daily_count,
+    )
+
+
+async def mark_message_milestone_backfill_completed(
+    session: AsyncSession, *, config_id: int
+) -> None:
+    result = await session.execute(
+        select(MessageMilestoneConfig).where(MessageMilestoneConfig.id == config_id)
+    )
+    config = result.scalar_one_or_none()
+    if config is None:
+        return
+    config.backfill_completed = True
+    await session.commit()
+
+
+async def delete_message_milestone_state(
+    session: AsyncSession, *, config_id: int
+) -> None:
+    """設定変更/削除時に達成状況と処理済みメッセージをまとめて消す。"""
+    await session.execute(
+        delete(MessageMilestoneProgress).where(
+            MessageMilestoneProgress.config_id == config_id
+        )
+    )
+    await session.execute(
+        delete(MessageMilestoneProcessedMessage).where(
+            MessageMilestoneProcessedMessage.config_id == config_id
+        )
     )
 
 

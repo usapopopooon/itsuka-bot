@@ -8,16 +8,17 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.web.db_helpers as _db
 import src.web.security as _security
-from src.database.models import MessageMilestoneConfig, MessageMilestoneProgress
+from src.database.models import MessageMilestoneConfig
 from src.services.message_milestone_service import (
     MAX_MILESTONE_DELETE_AFTER_SECONDS,
     MAX_MILESTONE_MESSAGE_LENGTH,
     MAX_MILESTONE_TEXT_LENGTH,
+    delete_message_milestone_state,
     normalize_embed_color,
     normalize_milestone_text,
     validate_pattern,
@@ -43,6 +44,7 @@ def _serialize(config: MessageMilestoneConfig) -> dict[str, Any]:
         if config.embed_color is not None
         else None,
         "delete_after_seconds": config.delete_after_seconds,
+        "backfill_completed": config.backfill_completed,
         "enabled": config.enabled,
     }
 
@@ -205,13 +207,10 @@ async def api_message_milestone_update(
     if error:
         return JSONResponse({"detail": error}, status_code=422)
 
-    await db.execute(
-        delete(MessageMilestoneProgress).where(
-            MessageMilestoneProgress.config_id == config_id
-        )
-    )
+    await delete_message_milestone_state(db, config_id=config_id)
     for key, value in values.items():
         setattr(config, key, value)
+    config.backfill_completed = False
     await db.commit()
     _security.record_form_submit(user_id, path)
     await db.refresh(config)
@@ -268,11 +267,7 @@ async def api_message_milestone_delete(
     if not config:
         return JSONResponse({"detail": "Not found"}, status_code=404)
 
-    await db.execute(
-        delete(MessageMilestoneProgress).where(
-            MessageMilestoneProgress.config_id == config_id
-        )
-    )
+    await delete_message_milestone_state(db, config_id=config_id)
     await db.delete(config)
     await db.commit()
     _security.record_form_submit(user_id, path)

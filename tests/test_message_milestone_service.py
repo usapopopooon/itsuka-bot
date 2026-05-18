@@ -5,12 +5,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from src.database.models import Base
+from src.database.models import (
+    Base,
+    MessageMilestoneProcessedMessage,
+    MessageMilestoneProgress,
+)
 from src.services.message_milestone_service import (
     ChannelMessageMilestone,
     MilestoneTemplateContext,
+    delete_message_milestone_state,
     mark_message_milestone_reward_sent,
     normalize_embed_color,
     record_message_and_get_reward,
@@ -22,6 +28,7 @@ from src.services.message_milestone_service import (
 def _config(*, daily: int = 2, days: int = 2) -> ChannelMessageMilestone:
     return ChannelMessageMilestone(
         id=1,
+        channel_id="123",
         daily_required_count=daily,
         required_days=days,
         pattern=None,
@@ -31,6 +38,7 @@ def _config(*, daily: int = 2, days: int = 2) -> ChannelMessageMilestone:
         embed_description=None,
         embed_color=None,
         delete_after_seconds=None,
+        backfill_completed=True,
     )
 
 
@@ -135,6 +143,30 @@ async def test_record_message_resets_after_missed_day(session_factory) -> None:
 
     assert not result.should_send
     assert result.streak_days == 1
+
+
+async def test_delete_message_milestone_state_removes_progress_and_processed(
+    session_factory,
+) -> None:
+    config = _config(daily=1, days=1)
+    day1 = datetime(2026, 5, 18, 1, tzinfo=UTC)
+
+    async with session_factory() as session:
+        await record_message_and_get_reward(
+            session,
+            config=config,
+            user_id="u1",
+            created_at=day1,
+            message_id="m1",
+        )
+        await delete_message_milestone_state(session, config_id=config.id)
+        await session.commit()
+
+        progress = await session.execute(select(MessageMilestoneProgress))
+        processed = await session.execute(select(MessageMilestoneProcessedMessage))
+
+    assert progress.scalars().all() == []
+    assert processed.scalars().all() == []
 
 
 def test_normalize_embed_color_accepts_hash_hex() -> None:

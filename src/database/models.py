@@ -71,6 +71,9 @@ class MessageMilestoneConfig(Base):
     embed_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     embed_color: Mapped[int | None] = mapped_column(Integer, nullable=True)
     delete_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    backfill_completed: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
@@ -116,6 +119,34 @@ class MessageMilestoneProgress(Base):
         return (
             f"<MessageMilestoneProgress(config_id={self.config_id}, "
             f"user_id={self.user_id}, streak_days={self.streak_days})>"
+        )
+
+
+class MessageMilestoneProcessedMessage(Base):
+    """MessageMilestoneConfig ごとに処理済みメッセージIDを記録する。"""
+
+    __tablename__ = "message_milestone_processed_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "config_id", "message_id", name="uq_message_milestone_config_message"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    config_id: Mapped[int] = mapped_column(
+        ForeignKey("message_milestone_configs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    message_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<MessageMilestoneProcessedMessage(config_id={self.config_id}, "
+            f"message_id={self.message_id})>"
         )
 
 

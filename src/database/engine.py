@@ -24,6 +24,7 @@ _LATE_ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("auto_reaction_configs", "pattern", "TEXT"),
     ("message_milestone_configs", "pattern", "TEXT"),
     ("message_milestone_configs", "delete_after_seconds", "INTEGER"),
+    ("message_milestone_configs", "backfill_completed", "BOOLEAN DEFAULT FALSE"),
     ("message_milestone_progress", "reward_pending", "BOOLEAN DEFAULT FALSE"),
 ]
 

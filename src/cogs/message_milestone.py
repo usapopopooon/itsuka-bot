@@ -17,7 +17,9 @@ from src.services.message_milestone_service import (
     ChannelMessageMilestone,
     MilestoneTemplateContext,
     get_enabled_message_milestones,
+    mark_message_milestone_backfill_completed,
     mark_message_milestone_reward_sent,
+    message_milestone_date,
     record_message_and_get_reward,
     render_milestone_template,
 )
@@ -29,6 +31,7 @@ _TRACKABLE_MESSAGE_TYPES: frozenset[discord.MessageType] = frozenset(
 )
 _EMBED_TITLE_LIMIT = 256
 _CONFIG_MAX_AGE_SECONDS = 2.0
+_BACKFILL_HISTORY_LIMIT = 200
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,7 @@ class MessageMilestoneCog(commands.Cog):
         self._progress_lock = asyncio.Lock()
         self._refresh_lock = asyncio.Lock()
         self._last_refresh_monotonic = 0.0
+        self._is_backfilling = False
         self._delete_tasks: set[asyncio.Task[None]] = set()
 
     async def cog_load(self) -> None:
@@ -69,6 +73,103 @@ class MessageMilestoneCog(commands.Cog):
             sum(len(records) for records in self._configs.values()),
             len(self._configs),
         )
+        if not self._is_backfilling:
+            await self._backfill_pending_configs()
+
+    async def _backfill_pending_configs(self) -> None:
+        if self._configs is None:
+            return
+        pending = [
+            config
+            for records in self._configs.values()
+            for config in records
+            if not config.backfill_completed
+        ]
+        self._is_backfilling = True
+        try:
+            for config in pending:
+                await self._backfill_config(config)
+        finally:
+            self._is_backfilling = False
+
+    async def _backfill_config(self, config: ChannelMessageMilestone) -> None:
+        channel = self.bot.get_channel(int(config.channel_id))
+        if channel is None:
+            logger.info(
+                "MessageMilestone: cannot backfill config %s; channel %s not cached",
+                config.id,
+                config.channel_id,
+            )
+            return
+        try:
+            sources = await self._backfill_sources(channel)
+        except discord.HTTPException as exc:
+            logger.info(
+                "MessageMilestone: failed to list backfill sources for config %s: %s",
+                config.id,
+                exc,
+            )
+            return
+        if not sources:
+            logger.info(
+                "MessageMilestone: cannot backfill config %s; "
+                "channel %s has no readable history",
+                config.id,
+                config.channel_id,
+            )
+            return
+        processed = 0
+        try:
+            remaining = _BACKFILL_HISTORY_LIMIT
+            for source in sources:
+                if remaining <= 0:
+                    break
+                async for message in source.history(limit=remaining):
+                    if self._message_is_before_today(message):
+                        break
+                    await self._track(message)
+                    processed += 1
+                    remaining -= 1
+                    if remaining <= 0:
+                        break
+        except discord.HTTPException as exc:
+            logger.info(
+                "MessageMilestone: failed to backfill config %s: %s", config.id, exc
+            )
+            return
+        async with async_session() as session:
+            await mark_message_milestone_backfill_completed(
+                session, config_id=config.id
+            )
+        logger.info(
+            "MessageMilestone: backfilled config %s with %d recent messages",
+            config.id,
+            processed,
+        )
+
+    def _message_is_before_today(self, message: discord.Message) -> bool:
+        return message_milestone_date(message.created_at) < message_milestone_date(None)
+
+    async def _backfill_sources(self, channel: object) -> list[discord.abc.Messageable]:
+        sources: list[discord.abc.Messageable] = []
+        if isinstance(channel, discord.abc.Messageable):
+            sources.append(channel)
+
+        threads = getattr(channel, "threads", None)
+        if threads:
+            sources.extend(
+                thread
+                for thread in threads
+                if isinstance(thread, discord.abc.Messageable)
+            )
+
+        archived_threads = getattr(channel, "archived_threads", None)
+        if callable(archived_threads):
+            async for thread in archived_threads(limit=_BACKFILL_HISTORY_LIMIT):
+                if isinstance(thread, discord.abc.Messageable):
+                    sources.append(thread)
+
+        return sources
 
     async def _ensure_recent_configs(self) -> None:
         if (
@@ -99,19 +200,25 @@ class MessageMilestoneCog(commands.Cog):
             return
         if message.type not in _TRACKABLE_MESSAGE_TYPES:
             return
-        await self._ensure_recent_configs()
+        if not self._is_backfilling:
+            await self._ensure_recent_configs()
         if self._configs is None:
             return
 
-        configs = self._configs.get(str(message.channel.id))
+        configs = self._configs_for_message(message)
         if not configs:
             # Web 保存直後の最初の投稿を取りこぼさないため、対象チャンネルが
             # キャッシュに無い場合だけ即時再読込する。
             await self.refresh()
             if self._configs is None:
                 return
-            configs = self._configs.get(str(message.channel.id))
+            configs = self._configs_for_message(message)
             if not configs:
+                logger.debug(
+                    "MessageMilestone: no config for message %s channel ids %s",
+                    message.id,
+                    self._message_channel_ids(message),
+                )
                 return
 
         async with self._progress_lock, async_session() as session:
@@ -119,10 +226,13 @@ class MessageMilestoneCog(commands.Cog):
                 if config.pattern is not None and not config.pattern.search(
                     message.content
                 ):
-                    logger.debug(
-                        "MessageMilestone: message %s did not match config %s",
+                    log = logger.info if not message.content else logger.debug
+                    log(
+                        "MessageMilestone: message %s did not match config %s "
+                        "(content length=%d)",
                         message.id,
                         config.id,
+                        len(message.content),
                     )
                     continue
                 try:
@@ -131,6 +241,7 @@ class MessageMilestoneCog(commands.Cog):
                         config=config,
                         user_id=str(message.author.id),
                         created_at=message.created_at,
+                        message_id=str(message.id),
                     )
                 except Exception:
                     logger.exception(
@@ -192,6 +303,36 @@ class MessageMilestoneCog(commands.Cog):
                 exc,
             )
             return False
+
+    def _message_channel_ids(self, message: discord.Message) -> list[str]:
+        """設定照合に使う channel id 候補を返す。
+
+        フォーラム投稿やスレッド内投稿は ``message.channel.id`` がスレッドIDに
+        なる。Web 管理画面では親のテキスト/フォーラムチャンネルを選ぶため、
+        ``parent_id`` も候補に含める。
+        """
+        ids = [str(message.channel.id)]
+        parent_id = getattr(message.channel, "parent_id", None)
+        if isinstance(parent_id, int):
+            parent = str(parent_id)
+            if parent not in ids:
+                ids.append(parent)
+        return ids
+
+    def _configs_for_message(
+        self, message: discord.Message
+    ) -> list[ChannelMessageMilestone]:
+        if self._configs is None:
+            return []
+        configs: list[ChannelMessageMilestone] = []
+        seen: set[int] = set()
+        for channel_id in self._message_channel_ids(message):
+            for config in self._configs.get(channel_id, []):
+                if config.id in seen:
+                    continue
+                configs.append(config)
+                seen.add(config.id)
+        return configs
 
     def _schedule_delete_countdown(
         self,
