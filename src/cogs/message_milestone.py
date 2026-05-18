@@ -64,6 +64,11 @@ class MessageMilestoneCog(commands.Cog):
         async with async_session() as session:
             self._configs = await get_enabled_message_milestones(session)
         self._last_refresh_monotonic = time.monotonic()
+        logger.info(
+            "MessageMilestone: loaded %d enabled configs across %d channels",
+            sum(len(records) for records in self._configs.values()),
+            len(self._configs),
+        )
 
     async def _ensure_recent_configs(self) -> None:
         if (
@@ -100,13 +105,25 @@ class MessageMilestoneCog(commands.Cog):
 
         configs = self._configs.get(str(message.channel.id))
         if not configs:
-            return
+            # Web 保存直後の最初の投稿を取りこぼさないため、対象チャンネルが
+            # キャッシュに無い場合だけ即時再読込する。
+            await self.refresh()
+            if self._configs is None:
+                return
+            configs = self._configs.get(str(message.channel.id))
+            if not configs:
+                return
 
         async with self._progress_lock, async_session() as session:
             for config in configs:
                 if config.pattern is not None and not config.pattern.search(
                     message.content
                 ):
+                    logger.debug(
+                        "MessageMilestone: message %s did not match config %s",
+                        message.id,
+                        config.id,
+                    )
                     continue
                 try:
                     result = await record_message_and_get_reward(
@@ -121,6 +138,14 @@ class MessageMilestoneCog(commands.Cog):
                         config.id,
                     )
                     continue
+                logger.debug(
+                    "MessageMilestone: config %s user %s daily=%s streak=%s send=%s",
+                    config.id,
+                    message.author.id,
+                    result.daily_count,
+                    result.streak_days,
+                    result.should_send,
+                )
                 if result.should_send:
                     sent = await self._send_reward(
                         message.channel, config, message.author
@@ -150,6 +175,7 @@ class MessageMilestoneCog(commands.Cog):
                 embed = self._build_embed(config, rendered, config.delete_after_seconds)
                 sent = await channel.send(content=rendered.content, embed=embed)
                 self._schedule_delete_countdown(sent, config, rendered)
+                logger.info("MessageMilestone: sent reward for config %s", config.id)
                 return True
             sent = await channel.send(
                 self._with_countdown_content(
@@ -157,10 +183,13 @@ class MessageMilestoneCog(commands.Cog):
                 )
             )
             self._schedule_delete_countdown(sent, config, rendered)
+            logger.info("MessageMilestone: sent reward for config %s", config.id)
             return True
-        except discord.HTTPException:
+        except discord.HTTPException as exc:
             logger.info(
-                "MessageMilestone: failed to send reward for config %s", config.id
+                "MessageMilestone: failed to send reward for config %s: %s",
+                config.id,
+                exc,
             )
             return False
 

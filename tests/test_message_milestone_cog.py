@@ -78,4 +78,25 @@ async def test_track_refreshes_stale_configs_before_checking_channel(
 
     await cog._track(message)
 
+    assert cog.refresh.await_count == 2
+
+
+async def test_track_refreshes_again_when_channel_missing_from_fresh_cache(
+    monkeypatch,
+) -> None:
+    cog = MessageMilestoneCog(MagicMock())
+    cog.refresh = AsyncMock()
+    cog._configs = {}
+    cog._last_refresh_monotonic = 10.0
+    monkeypatch.setattr("src.cogs.message_milestone.time.monotonic", lambda: 10.5)
+    message = MagicMock()
+    message.guild = MagicMock()
+    message.author = MagicMock()
+    message.author.bot = False
+    message.webhook_id = None
+    message.type = __import__("discord").MessageType.default
+    message.channel.id = 123
+
+    await cog._track(message)
+
     cog.refresh.assert_awaited_once()
