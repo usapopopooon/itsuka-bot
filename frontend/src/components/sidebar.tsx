@@ -6,7 +6,10 @@ import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 
-const navItems = [{ href: '/dashboard/auto-reaction', label: 'Auto Reaction' }]
+const navItems = [
+  { href: '/dashboard/auto-reaction', label: 'Auto Reaction' },
+  { href: '/dashboard/message-milestone', label: 'Message Milestone' },
+]
 
 export function Sidebar() {
   const pathname = usePathname()

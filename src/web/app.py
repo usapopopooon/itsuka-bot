@@ -25,6 +25,9 @@ from src.web.routes.api_auth import router as api_auth_router  # noqa: E402
 from src.web.routes.api_auto_reaction import (  # noqa: E402
     router as api_auto_reaction_router,
 )
+from src.web.routes.api_message_milestone import (  # noqa: E402
+    router as api_message_milestone_router,
+)
 from src.web.security import SecurityHeadersMiddleware  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -58,6 +61,7 @@ app.add_middleware(
 
 app.include_router(api_auth_router)
 app.include_router(api_auto_reaction_router)
+app.include_router(api_message_milestone_router)
 
 
 @app.get("/health")

@@ -24,5 +24,7 @@ def test_verify_garbage_returns_none() -> None:
 
 def test_verify_tampered_returns_none() -> None:
     token = create_jwt_token("admin")
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    header, payload, signature = token.split(".")
+    tampered_payload = payload[:-2] + ("AA" if payload[-2:] != "AA" else "BB")
+    tampered = ".".join((header, tampered_payload, signature))
     assert verify_jwt_token(tampered) is None

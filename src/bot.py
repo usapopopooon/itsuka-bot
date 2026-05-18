@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 class ItsukaBot(commands.Bot):
     """Itsuka Bot 本体。
 
-    AutoReaction の正規表現フィルタが本文を参照するため、``message_content``
-    (privileged intent) を要求する。Discord Developer Portal の Bot 設定で
-    "Message Content Intent" を ON にしておくこと。
+    AutoReaction の正規表現フィルタと MessageMilestone の投稿検知が本文を
+    参照するため、``message_content`` (privileged intent) を要求する。
+    Discord Developer Portal の Bot 設定で "Message Content Intent" を
+    ON にしておくこと。
 
     - ``guilds``: ギルド / チャンネル変更イベント
     - ``guild_messages``: ``on_message`` を発火させる
@@ -36,11 +37,15 @@ class ItsukaBot(commands.Bot):
         super().__init__(
             command_prefix="!",
             intents=intents,
-            activity=discord.Game(name="リアクション係"),
+            activity=discord.Game(name="投稿を見守り中"),
         )
 
     async def setup_hook(self) -> None:
-        for ext in ("src.cogs.discord_cache", "src.cogs.auto_reaction"):
+        for ext in (
+            "src.cogs.discord_cache",
+            "src.cogs.auto_reaction",
+            "src.cogs.message_milestone",
+        ):
             await self.load_extension(ext)
             logger.info("Loaded extension: %s", ext)
 

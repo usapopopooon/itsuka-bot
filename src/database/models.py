@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
+    ForeignKey,
     Integer,
     String,
     Text,
@@ -49,6 +51,71 @@ class AutoReactionConfig(Base):
         return (
             f"<AutoReactionConfig(id={self.id}, guild_id={self.guild_id}, "
             f"channel_id={self.channel_id}, enabled={self.enabled})>"
+        )
+
+
+class MessageMilestoneConfig(Base):
+    """指定チャンネルで投稿習慣を達成したユーザーへ通知する設定。"""
+
+    __tablename__ = "message_milestone_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    daily_required_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    required_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    pattern: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response_type: Mapped[str] = mapped_column(String, default="plain", nullable=False)
+    message_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embed_title: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    embed_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embed_color: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    delete_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<MessageMilestoneConfig(id={self.id}, guild_id={self.guild_id}, "
+            f"channel_id={self.channel_id}, enabled={self.enabled})>"
+        )
+
+
+class MessageMilestoneProgress(Base):
+    """MessageMilestoneConfig ごとのユーザー別達成状況。"""
+
+    __tablename__ = "message_milestone_progress"
+    __table_args__ = (
+        UniqueConstraint(
+            "config_id", "user_id", name="uq_message_milestone_config_user"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    config_id: Mapped[int] = mapped_column(
+        ForeignKey("message_milestone_configs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    last_counted_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    daily_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    streak_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reward_pending: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reward_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<MessageMilestoneProgress(config_id={self.config_id}, "
+            f"user_id={self.user_id}, streak_days={self.streak_days})>"
         )
 
 

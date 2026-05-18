@@ -24,3 +24,19 @@ export interface AutoReactionConfig {
   pattern: string | null
   enabled: boolean
 }
+
+export interface MessageMilestoneConfig {
+  id: number
+  guild_id: string
+  channel_id: string
+  daily_required_count: number
+  required_days: number
+  pattern: string | null
+  response_type: 'plain' | 'embed'
+  message_content: string | null
+  embed_title: string | null
+  embed_description: string | null
+  embed_color: string | null
+  delete_after_seconds: number | null
+  enabled: boolean
+}
