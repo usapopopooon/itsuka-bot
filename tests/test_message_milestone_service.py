@@ -203,11 +203,16 @@ async def test_record_consecutive_message_sends_after_same_user_reaches_goal(
         third = await record_consecutive_message_and_get_reward(
             session, config=config, user_id="u1", message_id="m3"
         )
+        fourth = await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", message_id="m4"
+        )
 
     assert not first.should_send
     assert not second.should_send
     assert third.should_send
     assert third.consecutive_count == 3
+    assert fourth.should_send
+    assert fourth.consecutive_count == 4
 
 
 async def test_record_consecutive_message_resets_when_user_changes(
@@ -254,10 +259,14 @@ def test_validate_pattern_strips_and_allows_regex() -> None:
 
 
 def test_render_milestone_template_replaces_known_variables() -> None:
-    context = MilestoneTemplateContext(username="Itsuka", daily_required_count=7)
+    context = MilestoneTemplateContext(
+        username="Itsuka", daily_required_count=7, current_count=9
+    )
 
     assert (
-        render_milestone_template("{username}: {n}/{count} {unknown}", context)
-        == "Itsuka: 7/7 {unknown}"
+        render_milestone_template(
+            "{username}: {n}/{count}/{current_count}/{current} {unknown}", context
+        )
+        == "Itsuka: 7/7/9/9 {unknown}"
     )
     assert render_milestone_template(None, context) is None

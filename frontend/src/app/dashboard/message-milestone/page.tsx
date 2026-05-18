@@ -23,30 +23,39 @@ import { ToggleButton } from '@/components/toggle-button'
 type ConditionType = 'daily_streak' | 'consecutive_posts'
 
 const DEFAULT_PLAIN_MESSAGES: Record<ConditionType, string> = {
-  consecutive_posts: '{username} さんが {n} 回連続投稿しました！',
+  consecutive_posts: '{username} さん、連続 {current_count} 回目です！',
   daily_streak: '{username} さんが1日 {n} 回投稿を達成しました！',
 }
 
 const DEFAULT_EMBED_TITLES: Record<ConditionType, string> = {
-  consecutive_posts: '{username} さん、連続投稿達成！',
+  consecutive_posts: '{username} さん、連続記録更新！',
   daily_streak: '{username} さん、投稿習慣達成！',
 }
 
 const DEFAULT_EMBED_DESCRIPTIONS: Record<ConditionType, string> = {
-  consecutive_posts: '{n} 回連続で投稿しました。',
+  consecutive_posts: 'いま連続 {current_count} 回目です。',
   daily_streak: '1日 {n} 回の投稿を達成しました。',
 }
 
 function conditionHelp(conditionType: ConditionType) {
   return conditionType === 'consecutive_posts'
-    ? '同じユーザーの対象投稿がN回続いたら通知します。別ユーザーの対象投稿が入るとリセットします。'
+    ? '同じユーザーの対象投稿がN回続いたら通知を始め、その後は投稿ごとに現在の連続回数を通知します。別ユーザーの対象投稿が入るとリセットします。'
     : '同じユーザーが1日N回以上の投稿をN日続けたら通知します。'
 }
 
 function conditionSummary(row: MessageMilestoneConfig) {
   return row.condition_type === 'consecutive_posts'
-    ? `${row.daily_required_count}回連続投稿`
+    ? `${row.daily_required_count}回目から連続通知`
     : `1日${row.daily_required_count}回 x ${row.required_days}日`
+}
+
+function renderTemplate(template: string, n: string, currentCount: string) {
+  return template
+    .replaceAll('{username}', 'いつか')
+    .replaceAll('{n}', n)
+    .replaceAll('{count}', n)
+    .replaceAll('{current_count}', currentCount)
+    .replaceAll('{current}', currentCount)
 }
 
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
@@ -115,6 +124,21 @@ export default function MessageMilestonePage() {
       return { kind: 'error' as const, label: '正規表現エラー' }
     }
   }, [pattern, patternProbe])
+  const messagePreview = useMemo(() => {
+    const threshold = dailyRequiredCount.trim() || 'N'
+    const currentCount =
+      conditionType === 'consecutive_posts' && Number.isFinite(Number(dailyRequiredCount))
+        ? String(Math.max(Number(dailyRequiredCount), 1))
+        : threshold
+
+    return {
+      content: messageContent.trim() ? renderTemplate(messageContent, threshold, currentCount) : '',
+      embedTitle: embedTitle.trim() ? renderTemplate(embedTitle, threshold, currentCount) : '',
+      embedDescription: embedDescription.trim()
+        ? renderTemplate(embedDescription, threshold, currentCount)
+        : '',
+    }
+  }, [conditionType, dailyRequiredCount, embedDescription, embedTitle, messageContent])
 
   async function fetchData() {
     const res = await fetch(`${API_BASE}/message-milestone`)
@@ -409,7 +433,9 @@ export default function MessageMilestonePage() {
                     htmlFor="daily-required-count"
                     className="mb-1.5 block text-sm font-medium"
                   >
-                    {conditionType === 'consecutive_posts' ? '連続投稿数' : '1日あたりの投稿数'}
+                    {conditionType === 'consecutive_posts'
+                      ? '通知を始める連続回数'
+                      : '1日あたりの投稿数'}
                   </label>
                   <Input
                     id="daily-required-count"
@@ -529,7 +555,8 @@ export default function MessageMilestonePage() {
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
                   テンプレート変数: <code>{'{username}'}</code> はユーザー名、
-                  <code>{'{n}'}</code> は設定した投稿数に置き換わります。
+                  <code>{'{n}'}</code> は設定した投稿数に置き換わります。 連続投稿モードでは{' '}
+                  <code>{'{current_count}'}</code> が現在の連続回数です。
                 </p>
               </div>
 
@@ -577,6 +604,29 @@ export default function MessageMilestonePage() {
                   </div>
                 </div>
               )}
+
+              <div className="rounded-md border border-input bg-muted/20 p-4">
+                <div className="mb-2 text-sm font-medium">プレビュー</div>
+                {responseType === 'embed' ? (
+                  <div className="space-y-2">
+                    {messagePreview.content && (
+                      <div className="whitespace-pre-wrap text-sm">{messagePreview.content}</div>
+                    )}
+                    <div className="border-l-4 border-green-600 bg-background px-3 py-2">
+                      <div className="text-sm font-semibold">
+                        {messagePreview.embedTitle || '埋め込みタイトル'}
+                      </div>
+                      <div className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
+                        {messagePreview.embedDescription || '埋め込み説明'}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="whitespace-pre-wrap text-sm">
+                    {messagePreview.content || '通常メッセージ本文'}
+                  </div>
+                )}
+              </div>
 
               {error && <p className="text-sm text-destructive-foreground">{error}</p>}
               <div className="flex items-center gap-2">

@@ -81,6 +81,7 @@ class MilestoneProgressResult:
 class MilestoneTemplateContext:
     username: str
     daily_required_count: int
+    current_count: int | None = None
 
 
 _TemplateValueFactory = Callable[[MilestoneTemplateContext], str]
@@ -89,6 +90,16 @@ _TEMPLATE_VARIABLES: dict[str, _TemplateValueFactory] = {
     "username": lambda context: context.username,
     "n": lambda context: str(context.daily_required_count),
     "count": lambda context: str(context.daily_required_count),
+    "current_count": lambda context: str(
+        context.current_count
+        if context.current_count is not None
+        else context.daily_required_count
+    ),
+    "current": lambda context: str(
+        context.current_count
+        if context.current_count is not None
+        else context.daily_required_count
+    ),
 }
 
 
@@ -346,10 +357,7 @@ async def record_consecutive_message_and_get_reward(
         db_config.consecutive_count = 1
         db_config.consecutive_reward_sent = False
 
-    should_send = (
-        db_config.consecutive_count >= config.daily_required_count
-        and not db_config.consecutive_reward_sent
-    )
+    should_send = db_config.consecutive_count >= config.daily_required_count
     await session.commit()
     return MilestoneProgressResult(
         should_send=should_send,

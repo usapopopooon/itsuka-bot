@@ -44,6 +44,23 @@ def test_render_reward_replaces_username_and_count() -> None:
     assert rendered.embed_description == "7 posts"
 
 
+def test_render_reward_replaces_current_count() -> None:
+    author = MagicMock()
+    author.display_name = "Itsuka"
+    author.name = "fallback"
+    cog = MessageMilestoneCog(MagicMock())
+    config = ChannelMessageMilestone(
+        **{
+            **_config().__dict__,
+            "message_content": "{username}: {current_count}/{n}",
+        }
+    )
+
+    rendered = cog._render_reward(config, author, current_count=12)
+
+    assert rendered.content == "Itsuka: 12/7"
+
+
 def test_rendered_reward_is_not_sendable_after_template_expands_too_long() -> None:
     author = MagicMock()
     author.display_name = "x" * 300

@@ -18,7 +18,6 @@ from src.services.message_milestone_service import (
     MilestoneTemplateContext,
     get_enabled_message_milestones,
     mark_message_milestone_backfill_completed,
-    mark_message_milestone_consecutive_reward_sent,
     mark_message_milestone_reward_sent,
     message_milestone_date,
     record_consecutive_message_and_get_reward,
@@ -397,16 +396,19 @@ class MessageMilestoneCog(commands.Cog):
                         config.response_type,
                         config.delete_after_seconds,
                     )
+                    current_count = (
+                        result.consecutive_count
+                        if config.condition_type == "consecutive_posts"
+                        else None
+                    )
                     sent = await self._send_reward(
-                        message.channel, config, message.author
+                        message.channel,
+                        config,
+                        message.author,
+                        current_count=current_count,
                     )
                     if sent:
-                        if config.condition_type == "consecutive_posts":
-                            await mark_message_milestone_consecutive_reward_sent(
-                                session,
-                                config_id=config.id,
-                            )
-                        else:
+                        if config.condition_type != "consecutive_posts":
                             await mark_message_milestone_reward_sent(
                                 session,
                                 config_id=config.id,
@@ -430,9 +432,11 @@ class MessageMilestoneCog(commands.Cog):
         channel: discord.abc.Messageable,
         config: ChannelMessageMilestone,
         author: discord.Member | discord.User,
+        *,
+        current_count: int | None = None,
     ) -> bool:
         try:
-            rendered = self._render_reward(config, author)
+            rendered = self._render_reward(config, author, current_count=current_count)
             if not self._rendered_reward_is_sendable(config, rendered):
                 logger.info(
                     "MessageMilestone: rendered reward too long for config %s "
@@ -649,6 +653,8 @@ class MessageMilestoneCog(commands.Cog):
         self,
         config: ChannelMessageMilestone,
         author: discord.Member | discord.User,
+        *,
+        current_count: int | None = None,
     ) -> _RenderedReward:
         username = (
             getattr(author, "display_name", None)
@@ -658,6 +664,7 @@ class MessageMilestoneCog(commands.Cog):
         context = MilestoneTemplateContext(
             username=username,
             daily_required_count=config.daily_required_count,
+            current_count=current_count,
         )
         return _RenderedReward(
             content=render_milestone_template(config.message_content, context),
