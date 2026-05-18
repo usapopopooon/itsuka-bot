@@ -68,6 +68,9 @@ class MilestoneProgressResult:
     should_send: bool
     streak_days: int
     daily_count: int
+    duplicate: bool = False
+    crossed_daily_goal: bool = False
+    reward_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -233,6 +236,7 @@ async def record_message_and_get_reward(
                 should_send=False,
                 streak_days=0,
                 daily_count=0,
+                duplicate=True,
             )
 
     today = message_milestone_date(created_at)
@@ -293,6 +297,8 @@ async def record_message_and_get_reward(
         should_send=should_send,
         streak_days=progress.streak_days,
         daily_count=progress.daily_count,
+        crossed_daily_goal=crossed_daily_goal,
+        reward_pending=progress.reward_pending,
     )
 
 

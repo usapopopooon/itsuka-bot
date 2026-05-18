@@ -32,6 +32,7 @@ _TRACKABLE_MESSAGE_TYPES: frozenset[discord.MessageType] = frozenset(
 _EMBED_TITLE_LIMIT = 256
 _CONFIG_MAX_AGE_SECONDS = 2.0
 _BACKFILL_HISTORY_LIMIT = 200
+_CONTENT_PREVIEW_LIMIT = 80
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,15 @@ class _RenderedReward:
     content: str | None
     embed_title: str | None
     embed_description: str | None
+
+
+def _preview_text(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = value.replace("\n", "\\n")
+    if len(normalized) <= _CONTENT_PREVIEW_LIMIT:
+        return normalized
+    return f"{normalized[:_CONTENT_PREVIEW_LIMIT]}..."
 
 
 class MessageMilestoneCog(commands.Cog):
@@ -73,6 +83,12 @@ class MessageMilestoneCog(commands.Cog):
             sum(len(records) for records in self._configs.values()),
             len(self._configs),
         )
+        for channel_id, records in self._configs.items():
+            logger.info(
+                "MessageMilestone: channel %s enabled config ids=%s",
+                channel_id,
+                [config.id for config in records],
+            )
         if not self._is_backfilling:
             await self._backfill_pending_configs()
 
@@ -85,6 +101,12 @@ class MessageMilestoneCog(commands.Cog):
             for config in records
             if not config.backfill_completed
         ]
+        if pending:
+            logger.info(
+                "MessageMilestone: %d configs need backfill: ids=%s",
+                len(pending),
+                [config.id for config in pending],
+            )
         self._is_backfilling = True
         try:
             for config in pending:
@@ -93,6 +115,15 @@ class MessageMilestoneCog(commands.Cog):
             self._is_backfilling = False
 
     async def _backfill_config(self, config: ChannelMessageMilestone) -> None:
+        logger.info(
+            "MessageMilestone: starting backfill config=%s channel=%s required=%s/day "
+            "days=%s pattern=%r",
+            config.id,
+            config.channel_id,
+            config.daily_required_count,
+            config.required_days,
+            config.pattern.pattern if config.pattern else None,
+        )
         channel = self.bot.get_channel(int(config.channel_id))
         if channel is None:
             logger.info(
@@ -122,6 +153,13 @@ class MessageMilestoneCog(commands.Cog):
         try:
             remaining = _BACKFILL_HISTORY_LIMIT
             for source in sources:
+                logger.info(
+                    "MessageMilestone: reading backfill source config=%s source=%s "
+                    "remaining_limit=%s",
+                    config.id,
+                    getattr(source, "id", type(source).__name__),
+                    remaining,
+                )
                 if remaining <= 0:
                     break
                 async for message in source.history(limit=remaining):
@@ -185,6 +223,7 @@ class MessageMilestoneCog(commands.Cog):
                 < _CONFIG_MAX_AGE_SECONDS
             ):
                 return
+            logger.info("MessageMilestone: refreshing config cache before tracking")
             await self.refresh()
 
     @commands.Cog.listener()
@@ -193,20 +232,50 @@ class MessageMilestoneCog(commands.Cog):
 
     async def _track(self, message: discord.Message) -> None:
         if not message.guild or not message.author:
+            logger.debug(
+                "MessageMilestone: ignored message %s because guild/author is missing",
+                getattr(message, "id", None),
+            )
             return
         if message.author.bot:
+            logger.debug(
+                "MessageMilestone: ignored bot message %s author=%s",
+                message.id,
+                getattr(message.author, "id", None),
+            )
             return
         if message.webhook_id is not None:
+            logger.debug(
+                "MessageMilestone: ignored webhook message %s webhook=%s",
+                message.id,
+                message.webhook_id,
+            )
             return
         if message.type not in _TRACKABLE_MESSAGE_TYPES:
+            logger.debug(
+                "MessageMilestone: ignored message %s unsupported type=%s",
+                message.id,
+                message.type,
+            )
             return
         if not self._is_backfilling:
             await self._ensure_recent_configs()
         if self._configs is None:
+            logger.info(
+                "MessageMilestone: ignored message %s because config cache is empty",
+                message.id,
+            )
             return
 
         configs = self._configs_for_message(message)
         if not configs:
+            logger.info(
+                "MessageMilestone: no cached config for message=%s guild=%s "
+                "channel_candidates=%s; refreshing once",
+                message.id,
+                message.guild.id,
+                self._message_channel_ids(message),
+            )
             # Web 保存直後の最初の投稿を取りこぼさないため、対象チャンネルが
             # キャッシュに無い場合だけ即時再読込する。
             await self.refresh()
@@ -214,27 +283,58 @@ class MessageMilestoneCog(commands.Cog):
                 return
             configs = self._configs_for_message(message)
             if not configs:
-                logger.debug(
-                    "MessageMilestone: no config for message %s channel ids %s",
+                logger.info(
+                    "MessageMilestone: no config after refresh for message=%s "
+                    "guild=%s channel_candidates=%s",
                     message.id,
+                    message.guild.id,
                     self._message_channel_ids(message),
                 )
                 return
+
+        logger.info(
+            "MessageMilestone: tracking message=%s guild=%s channel=%s "
+            "channel_candidates=%s author=%s content_len=%s content_preview=%r "
+            "config_ids=%s backfill=%s",
+            message.id,
+            message.guild.id,
+            message.channel.id,
+            self._message_channel_ids(message),
+            message.author.id,
+            len(message.content),
+            _preview_text(message.content),
+            [config.id for config in configs],
+            self._is_backfilling,
+        )
 
         async with self._progress_lock, async_session() as session:
             for config in configs:
                 if config.pattern is not None and not config.pattern.search(
                     message.content
                 ):
-                    log = logger.info if not message.content else logger.debug
-                    log(
-                        "MessageMilestone: message %s did not match config %s "
-                        "(content length=%d)",
+                    logger.info(
+                        "MessageMilestone: message=%s did not match config=%s "
+                        "pattern=%r content_len=%d content_preview=%r",
                         message.id,
                         config.id,
+                        config.pattern.pattern,
                         len(message.content),
+                        _preview_text(message.content),
                     )
+                    if not message.content:
+                        logger.info(
+                            "MessageMilestone: message=%s content is empty; if a "
+                            "pattern is set, enable Message Content Intent in the "
+                            "Discord Developer Portal and restart the bot",
+                            message.id,
+                        )
                     continue
+                logger.info(
+                    "MessageMilestone: message=%s matched config=%s pattern=%r",
+                    message.id,
+                    config.id,
+                    config.pattern.pattern if config.pattern else None,
+                )
                 try:
                     result = await record_message_and_get_reward(
                         session,
@@ -249,15 +349,39 @@ class MessageMilestoneCog(commands.Cog):
                         config.id,
                     )
                     continue
-                logger.debug(
-                    "MessageMilestone: config %s user %s daily=%s streak=%s send=%s",
+                logger.info(
+                    "MessageMilestone: progress config=%s user=%s message=%s "
+                    "daily=%s/%s streak=%s/%s crossed_daily_goal=%s "
+                    "reward_pending=%s duplicate=%s should_send=%s",
                     config.id,
                     message.author.id,
+                    message.id,
                     result.daily_count,
+                    config.daily_required_count,
                     result.streak_days,
+                    config.required_days,
+                    result.crossed_daily_goal,
+                    result.reward_pending,
+                    result.duplicate,
                     result.should_send,
                 )
+                if result.duplicate:
+                    logger.info(
+                        "MessageMilestone: message=%s config=%s already processed; "
+                        "skipping duplicate count",
+                        message.id,
+                        config.id,
+                    )
                 if result.should_send:
+                    logger.info(
+                        "MessageMilestone: sending reward config=%s user=%s "
+                        "channel=%s response_type=%s delete_after=%s",
+                        config.id,
+                        message.author.id,
+                        message.channel.id,
+                        config.response_type,
+                        config.delete_after_seconds,
+                    )
                     sent = await self._send_reward(
                         message.channel, config, message.author
                     )
@@ -266,6 +390,18 @@ class MessageMilestoneCog(commands.Cog):
                             session,
                             config_id=config.id,
                             user_id=str(message.author.id),
+                        )
+                        logger.info(
+                            "MessageMilestone: marked reward sent config=%s user=%s",
+                            config.id,
+                            message.author.id,
+                        )
+                    else:
+                        logger.info(
+                            "MessageMilestone: reward send failed config=%s user=%s; "
+                            "will retry on the next counted message",
+                            config.id,
+                            message.author.id,
                         )
 
     async def _send_reward(
@@ -278,15 +414,23 @@ class MessageMilestoneCog(commands.Cog):
             rendered = self._render_reward(config, author)
             if not self._rendered_reward_is_sendable(config, rendered):
                 logger.info(
-                    "MessageMilestone: rendered reward too long for config %s",
+                    "MessageMilestone: rendered reward too long for config %s "
+                    "content_len=%s title_len=%s description_len=%s",
                     config.id,
+                    len(rendered.content or ""),
+                    len(rendered.embed_title or ""),
+                    len(rendered.embed_description or ""),
                 )
                 return False
             if config.response_type == "embed":
                 embed = self._build_embed(config, rendered, config.delete_after_seconds)
                 sent = await channel.send(content=rendered.content, embed=embed)
                 self._schedule_delete_countdown(sent, config, rendered)
-                logger.info("MessageMilestone: sent reward for config %s", config.id)
+                logger.info(
+                    "MessageMilestone: sent embed reward for config %s message=%s",
+                    config.id,
+                    sent.id,
+                )
                 return True
             sent = await channel.send(
                 self._with_countdown_content(
@@ -294,7 +438,11 @@ class MessageMilestoneCog(commands.Cog):
                 )
             )
             self._schedule_delete_countdown(sent, config, rendered)
-            logger.info("MessageMilestone: sent reward for config %s", config.id)
+            logger.info(
+                "MessageMilestone: sent plain reward for config %s message=%s",
+                config.id,
+                sent.id,
+            )
             return True
         except discord.HTTPException as exc:
             logger.info(
@@ -342,6 +490,13 @@ class MessageMilestoneCog(commands.Cog):
     ) -> None:
         if config.delete_after_seconds is None:
             return
+        logger.info(
+            "MessageMilestone: scheduled countdown delete message=%s config=%s "
+            "seconds=%s",
+            message.id,
+            config.id,
+            config.delete_after_seconds,
+        )
         task = asyncio.create_task(
             self._delete_with_countdown(message, config, rendered)
         )
@@ -375,6 +530,11 @@ class MessageMilestoneCog(commands.Cog):
                     )
             await asyncio.sleep(1)
             await message.delete()
+            logger.info(
+                "MessageMilestone: deleted countdown message=%s config=%s",
+                message.id,
+                config.id,
+            )
         except asyncio.CancelledError:
             raise
         except discord.HTTPException:

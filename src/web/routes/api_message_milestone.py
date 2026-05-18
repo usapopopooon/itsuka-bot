@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -26,6 +27,7 @@ from src.services.message_milestone_service import (
 from src.web.jwt_auth import get_current_user_jwt
 
 router = APIRouter(prefix="/api/v1", tags=["api-message-milestone"])
+logger = logging.getLogger(__name__)
 
 
 def _serialize(config: MessageMilestoneConfig) -> dict[str, Any]:
@@ -132,6 +134,21 @@ async def api_message_milestone_list(
     )
     configs = list(result.scalars().all())
     guilds_map, channels_map = await _db._get_discord_guilds_and_channels(db)
+    logger.info(
+        "MessageMilestone API: list requested by user=%s configs=%s",
+        user.get("sub", ""),
+        [
+            {
+                "id": config.id,
+                "guild_id": config.guild_id,
+                "channel_id": config.channel_id,
+                "enabled": config.enabled,
+                "pattern": config.pattern,
+                "backfill_completed": config.backfill_completed,
+            }
+            for config in configs
+        ],
+    )
 
     return JSONResponse(
         {
@@ -166,6 +183,14 @@ async def api_message_milestone_create(
 
     values, error = await _normalize_body(body)
     if error:
+        logger.info(
+            "MessageMilestone API: create rejected user=%s guild=%s channel=%s "
+            "error=%s",
+            user_id,
+            body.guild_id,
+            body.channel_id,
+            error,
+        )
         return JSONResponse({"detail": error}, status_code=422)
 
     config = MessageMilestoneConfig(
@@ -177,6 +202,19 @@ async def api_message_milestone_create(
     await db.commit()
     _security.record_form_submit(user_id, path)
     await db.refresh(config)
+    logger.info(
+        "MessageMilestone API: created config=%s user=%s guild=%s channel=%s "
+        "required=%s/day days=%s pattern=%r response_type=%s delete_after=%s",
+        config.id,
+        user_id,
+        config.guild_id,
+        config.channel_id,
+        config.daily_required_count,
+        config.required_days,
+        config.pattern,
+        config.response_type,
+        config.delete_after_seconds,
+    )
     return JSONResponse({"ok": True, "config": _serialize(config)}, status_code=201)
 
 
@@ -205,15 +243,41 @@ async def api_message_milestone_update(
 
     values, error = await _normalize_body(body)
     if error:
+        logger.info(
+            "MessageMilestone API: update rejected config=%s user=%s error=%s",
+            config_id,
+            user_id,
+            error,
+        )
         return JSONResponse({"detail": error}, status_code=422)
 
     await delete_message_milestone_state(db, config_id=config_id)
+    logger.info(
+        "MessageMilestone API: reset progress/processed state for config=%s "
+        "before update",
+        config_id,
+    )
     for key, value in values.items():
         setattr(config, key, value)
     config.backfill_completed = False
     await db.commit()
     _security.record_form_submit(user_id, path)
     await db.refresh(config)
+    logger.info(
+        "MessageMilestone API: updated config=%s user=%s guild=%s channel=%s "
+        "required=%s/day days=%s pattern=%r response_type=%s delete_after=%s "
+        "backfill_completed=%s",
+        config.id,
+        user_id,
+        config.guild_id,
+        config.channel_id,
+        config.daily_required_count,
+        config.required_days,
+        config.pattern,
+        config.response_type,
+        config.delete_after_seconds,
+        config.backfill_completed,
+    )
     return JSONResponse({"ok": True, "config": _serialize(config)})
 
 
@@ -242,6 +306,12 @@ async def api_message_milestone_toggle(
     config.enabled = not config.enabled
     await db.commit()
     _security.record_form_submit(user_id, path)
+    logger.info(
+        "MessageMilestone API: toggled config=%s user=%s enabled=%s",
+        config.id,
+        user_id,
+        config.enabled,
+    )
     return JSONResponse({"ok": True, "enabled": config.enabled})
 
 
@@ -271,4 +341,9 @@ async def api_message_milestone_delete(
     await db.delete(config)
     await db.commit()
     _security.record_form_submit(user_id, path)
+    logger.info(
+        "MessageMilestone API: deleted config=%s user=%s",
+        config_id,
+        user_id,
+    )
     return JSONResponse({"ok": True})
