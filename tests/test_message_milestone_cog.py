@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from src.cogs.message_milestone import MessageMilestoneCog
 from src.services.message_milestone_service import ChannelMessageMilestone
@@ -58,3 +58,24 @@ def test_countdown_step_uses_coarser_updates_for_long_durations() -> None:
     assert cog._countdown_step_seconds(5) == 1
     assert cog._countdown_step_seconds(30) == 5
     assert cog._countdown_step_seconds(120) == 15
+
+
+async def test_track_refreshes_stale_configs_before_checking_channel(
+    monkeypatch,
+) -> None:
+    cog = MessageMilestoneCog(MagicMock())
+    cog.refresh = AsyncMock()
+    cog._configs = {}
+    cog._last_refresh_monotonic = 0.0
+    monkeypatch.setattr("src.cogs.message_milestone.time.monotonic", lambda: 10.0)
+    message = MagicMock()
+    message.guild = MagicMock()
+    message.author = MagicMock()
+    message.author.bot = False
+    message.webhook_id = None
+    message.type = __import__("discord").MessageType.default
+    message.channel.id = 123
+
+    await cog._track(message)
+
+    cog.refresh.assert_awaited_once()

@@ -205,6 +205,11 @@ async def api_message_milestone_update(
     if error:
         return JSONResponse({"detail": error}, status_code=422)
 
+    await db.execute(
+        delete(MessageMilestoneProgress).where(
+            MessageMilestoneProgress.config_id == config_id
+        )
+    )
     for key, value in values.items():
         setattr(config, key, value)
     await db.commit()

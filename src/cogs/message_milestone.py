@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 
 import discord
@@ -27,6 +28,7 @@ _TRACKABLE_MESSAGE_TYPES: frozenset[discord.MessageType] = frozenset(
     {discord.MessageType.default, discord.MessageType.reply}
 )
 _EMBED_TITLE_LIMIT = 256
+_CONFIG_MAX_AGE_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,8 @@ class MessageMilestoneCog(commands.Cog):
         self.bot = bot
         self._configs: dict[str, list[ChannelMessageMilestone]] | None = None
         self._progress_lock = asyncio.Lock()
+        self._refresh_lock = asyncio.Lock()
+        self._last_refresh_monotonic = 0.0
         self._delete_tasks: set[asyncio.Task[None]] = set()
 
     async def cog_load(self) -> None:
@@ -59,6 +63,23 @@ class MessageMilestoneCog(commands.Cog):
     async def refresh(self) -> None:
         async with async_session() as session:
             self._configs = await get_enabled_message_milestones(session)
+        self._last_refresh_monotonic = time.monotonic()
+
+    async def _ensure_recent_configs(self) -> None:
+        if (
+            self._configs is not None
+            and time.monotonic() - self._last_refresh_monotonic
+            < _CONFIG_MAX_AGE_SECONDS
+        ):
+            return
+        async with self._refresh_lock:
+            if (
+                self._configs is not None
+                and time.monotonic() - self._last_refresh_monotonic
+                < _CONFIG_MAX_AGE_SECONDS
+            ):
+                return
+            await self.refresh()
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -73,6 +94,7 @@ class MessageMilestoneCog(commands.Cog):
             return
         if message.type not in _TRACKABLE_MESSAGE_TYPES:
             return
+        await self._ensure_recent_configs()
         if self._configs is None:
             return
 
