@@ -48,6 +48,7 @@ export default function MessageMilestonePage() {
   const [dailyRequiredCount, setDailyRequiredCount] = useState('1')
   const [requiredDays, setRequiredDays] = useState('1')
   const [pattern, setPattern] = useState('')
+  const [patternProbe, setPatternProbe] = useState('てすと')
   const [responseType, setResponseType] = useState<'plain' | 'embed'>('plain')
   const [messageContent, setMessageContent] = useState('')
   const [embedTitle, setEmbedTitle] = useState('')
@@ -69,6 +70,19 @@ export default function MessageMilestonePage() {
         : '',
     [channels, guilds, selectedChannel, selectedGuild]
   )
+  const patternPreview = useMemo(() => {
+    const trimmedPattern = pattern.trim()
+    if (!trimmedPattern) {
+      return { kind: 'empty' as const, label: 'フィルタなし' }
+    }
+    try {
+      return new RegExp(trimmedPattern).test(patternProbe)
+        ? { kind: 'match' as const, label: 'マッチします' }
+        : { kind: 'miss' as const, label: 'マッチしません' }
+    } catch {
+      return { kind: 'error' as const, label: '正規表現エラー' }
+    }
+  }, [pattern, patternProbe])
 
   async function fetchData() {
     const res = await fetch(`${API_BASE}/message-milestone`)
@@ -95,6 +109,7 @@ export default function MessageMilestonePage() {
     setDailyRequiredCount('1')
     setRequiredDays('1')
     setPattern('')
+    setPatternProbe('てすと')
     setResponseType('plain')
     setMessageContent('')
     setEmbedTitle('')
@@ -328,7 +343,8 @@ export default function MessageMilestonePage() {
 
               <div>
                 <label htmlFor="pattern" className="mb-1.5 block text-sm font-medium">
-                  カウント対象フィルタ <span className="text-muted-foreground">(任意)</span>
+                  カウント対象フィルタ
+                  <span className="text-muted-foreground"> (正規表現・任意)</span>
                 </label>
                 <Input
                   id="pattern"
@@ -340,7 +356,30 @@ export default function MessageMilestonePage() {
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
                   本文がこの正規表現にマッチした投稿だけをN回のカウント対象にします。
+                  フィルタを使う場合は Bot の Message Content Intent が必要です。
                 </p>
+                <div className="mt-2 grid gap-2 md:grid-cols-[1fr_auto]">
+                  <Input
+                    type="text"
+                    value={patternProbe}
+                    onChange={(e) => setPatternProbe(e.target.value)}
+                    placeholder="この文字列でフィルタを確認"
+                    spellCheck={false}
+                    aria-label="フィルタ確認用テキスト"
+                  />
+                  <Badge
+                    variant={patternPreview.kind === 'match' ? 'default' : 'secondary'}
+                    className={
+                      patternPreview.kind === 'match'
+                        ? 'justify-center bg-green-600 hover:bg-green-600'
+                        : patternPreview.kind === 'error'
+                          ? 'justify-center bg-red-700 text-white hover:bg-red-700'
+                          : 'justify-center'
+                    }
+                  >
+                    {patternPreview.label}
+                  </Badge>
+                </div>
               </div>
 
               <div>
