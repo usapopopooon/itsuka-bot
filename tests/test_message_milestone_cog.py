@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock
-from zoneinfo import ZoneInfo
-
-import discord
 
 from src.cogs.message_milestone import MessageMilestoneCog
 from src.services.message_milestone_service import ChannelMessageMilestone
@@ -26,7 +22,6 @@ def _config() -> ChannelMessageMilestone:
         embed_description="{count} posts",
         embed_color=None,
         delete_after_seconds=None,
-        backfill_completed=True,
         consecutive_notification_limit="none",
         consecutive_notification_daily_limit=1,
     )
@@ -157,114 +152,3 @@ async def test_track_refreshes_again_when_channel_missing_from_fresh_cache(
     await cog._track(message)
 
     cog.refresh.assert_awaited_once()
-
-
-async def test_backfill_config_tracks_today_history(monkeypatch) -> None:
-    cog = MessageMilestoneCog(MagicMock())
-    config = ChannelMessageMilestone(
-        **{**_config().__dict__, "backfill_completed": False}
-    )
-    today_message = MagicMock()
-    today_message.created_at = datetime.now(UTC)
-    old_message = MagicMock()
-    old_message.created_at = datetime(2020, 1, 1, tzinfo=UTC)
-    channel = MagicMock(spec=discord.abc.Messageable)
-    channel.history.return_value = _AsyncIter([today_message, old_message])
-    cog.bot.get_channel.return_value = channel
-    tracked: list[MagicMock] = []
-
-    async def fake_track(message):
-        tracked.append(message)
-
-    monkeypatch.setattr(cog, "_track", fake_track)
-    monkeypatch.setattr(
-        "src.cogs.message_milestone.mark_message_milestone_backfill_completed",
-        AsyncMock(),
-    )
-    monkeypatch.setattr(
-        "src.cogs.message_milestone.async_session",
-        lambda: _AsyncContext(MagicMock()),
-    )
-
-    await cog._backfill_config(config)
-
-    assert tracked == [today_message]
-
-
-def test_message_is_before_today_uses_milestone_timezone(monkeypatch) -> None:
-    cog = MessageMilestoneCog(MagicMock())
-    message = MagicMock()
-    message.created_at = datetime(2026, 5, 17, 16, 0, tzinfo=UTC)
-
-    def fake_milestone_date(created_at):
-        if created_at is None:
-            return date(2026, 5, 18)
-        return created_at.astimezone(ZoneInfo("Asia/Tokyo")).date()
-
-    monkeypatch.setattr(
-        "src.cogs.message_milestone.message_milestone_date",
-        fake_milestone_date,
-    )
-
-    assert not cog._message_is_before_today(message)
-
-
-async def test_backfill_config_tracks_forum_thread_history(monkeypatch) -> None:
-    cog = MessageMilestoneCog(MagicMock())
-    config = ChannelMessageMilestone(
-        **{**_config().__dict__, "channel_id": "999", "backfill_completed": False}
-    )
-    active_message = MagicMock()
-    active_message.created_at = datetime.now(UTC)
-    archived_message = MagicMock()
-    archived_message.created_at = datetime.now(UTC)
-    active_thread = MagicMock(spec=discord.Thread)
-    archived_thread = MagicMock(spec=discord.Thread)
-    active_thread.history.return_value = _AsyncIter([active_message])
-    archived_thread.history.return_value = _AsyncIter([archived_message])
-    forum = MagicMock(spec=discord.ForumChannel)
-    forum.threads = [active_thread]
-    forum.archived_threads.return_value = _AsyncIter([archived_thread])
-    cog.bot.get_channel.return_value = forum
-    tracked: list[MagicMock] = []
-
-    async def fake_track(message):
-        tracked.append(message)
-
-    monkeypatch.setattr(cog, "_track", fake_track)
-    monkeypatch.setattr(
-        "src.cogs.message_milestone.mark_message_milestone_backfill_completed",
-        AsyncMock(),
-    )
-    monkeypatch.setattr(
-        "src.cogs.message_milestone.async_session",
-        lambda: _AsyncContext(MagicMock()),
-    )
-
-    await cog._backfill_config(config)
-
-    assert tracked == [active_message, archived_message]
-
-
-class _AsyncIter:
-    def __init__(self, items: list) -> None:
-        self._items = list(items)
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if not self._items:
-            raise StopAsyncIteration
-        return self._items.pop(0)
-
-
-class _AsyncContext:
-    def __init__(self, value) -> None:
-        self.value = value
-
-    async def __aenter__(self):
-        return self.value
-
-    async def __aexit__(self, *_exc) -> None:
-        return None

@@ -41,6 +41,5 @@ export interface MessageMilestoneConfig {
   embed_description: string | null
   embed_color: string | null
   delete_after_seconds: number | null
-  backfill_completed: boolean
   enabled: boolean
 }

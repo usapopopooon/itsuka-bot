@@ -66,7 +66,6 @@ def _serialize(config: MessageMilestoneConfig) -> dict[str, Any]:
         if config.embed_color is not None
         else None,
         "delete_after_seconds": config.delete_after_seconds,
-        "backfill_completed": config.backfill_completed,
         "enabled": config.enabled,
     }
 
@@ -197,7 +196,6 @@ async def api_message_milestone_list(
                 ),
                 "enabled": config.enabled,
                 "pattern": config.pattern,
-                "backfill_completed": config.backfill_completed,
             }
             for config in configs
         ],
@@ -251,7 +249,6 @@ async def api_message_milestone_create(
         channel_id=body.channel_id,
         **values,
     )
-    config.backfill_completed = values["condition_type"] == CONDITION_CONSECUTIVE_POSTS
     db.add(config)
     await db.commit()
     _security.record_form_submit(user_id, path)
@@ -317,15 +314,13 @@ async def api_message_milestone_update(
     )
     for key, value in values.items():
         setattr(config, key, value)
-    config.backfill_completed = values["condition_type"] == CONDITION_CONSECUTIVE_POSTS
     await db.commit()
     _security.record_form_submit(user_id, path)
     await db.refresh(config)
     logger.info(
         "MessageMilestone API: updated config=%s user=%s guild=%s channel=%s "
         "condition=%s required=%s days=%s pattern=%r response_type=%s "
-        "notification_limit=%s notification_daily_limit=%s delete_after=%s "
-        "backfill_completed=%s",
+        "notification_limit=%s notification_daily_limit=%s delete_after=%s",
         config.id,
         user_id,
         config.guild_id,
@@ -338,7 +333,6 @@ async def api_message_milestone_update(
         config.consecutive_notification_limit,
         config.consecutive_notification_daily_limit,
         config.delete_after_seconds,
-        config.backfill_completed,
     )
     return JSONResponse({"ok": True, "config": _serialize(config)})
 

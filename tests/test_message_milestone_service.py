@@ -42,7 +42,6 @@ def _config(*, daily: int = 2, days: int = 2) -> ChannelMessageMilestone:
         embed_description=None,
         embed_color=None,
         delete_after_seconds=None,
-        backfill_completed=True,
         consecutive_notification_limit="none",
         consecutive_notification_daily_limit=1,
     )
@@ -193,7 +192,6 @@ async def test_record_consecutive_message_sends_after_same_user_reaches_goal(
                 required_days=1,
                 response_type="plain",
                 message_content="done",
-                backfill_completed=True,
             )
         )
         await session.commit()
@@ -236,7 +234,6 @@ async def test_record_consecutive_message_resets_when_user_changes(
                 required_days=1,
                 response_type="plain",
                 message_content="done",
-                backfill_completed=True,
             )
         )
         await session.commit()
@@ -277,7 +274,6 @@ async def test_record_consecutive_message_can_limit_notifications_once_per_user_
                 required_days=1,
                 response_type="plain",
                 message_content="done",
-                backfill_completed=True,
             )
         )
         await session.commit()
@@ -330,7 +326,6 @@ async def test_record_consecutive_message_can_limit_notifications_n_times_per_us
                 required_days=1,
                 response_type="plain",
                 message_content="done",
-                backfill_completed=True,
             )
         )
         await session.commit()

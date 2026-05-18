@@ -13,16 +13,13 @@ from discord.ext import commands, tasks
 from src.database.engine import async_session
 from src.services.message_milestone_service import (
     CONDITION_CONSECUTIVE_POSTS,
-    CONDITION_DAILY_STREAK,
     MAX_MILESTONE_MESSAGE_LENGTH,
     MAX_MILESTONE_TEXT_LENGTH,
     ChannelMessageMilestone,
     MilestoneTemplateContext,
     get_enabled_message_milestones,
-    mark_message_milestone_backfill_completed,
     mark_message_milestone_consecutive_reward_sent,
     mark_message_milestone_reward_sent,
-    message_milestone_date,
     record_consecutive_message_and_get_reward,
     record_message_and_get_reward,
     render_milestone_template,
@@ -35,7 +32,6 @@ _TRACKABLE_MESSAGE_TYPES: frozenset[discord.MessageType] = frozenset(
 )
 _EMBED_TITLE_LIMIT = 256
 _CONFIG_MAX_AGE_SECONDS = 2.0
-_BACKFILL_HISTORY_LIMIT = 200
 _CONTENT_PREVIEW_LIMIT = 80
 
 
@@ -64,7 +60,6 @@ class MessageMilestoneCog(commands.Cog):
         self._progress_lock = asyncio.Lock()
         self._refresh_lock = asyncio.Lock()
         self._last_refresh_monotonic = 0.0
-        self._is_backfilling = False
         self._delete_tasks: set[asyncio.Task[None]] = set()
 
     async def cog_load(self) -> None:
@@ -93,129 +88,6 @@ class MessageMilestoneCog(commands.Cog):
                 channel_id,
                 [config.id for config in records],
             )
-        if not self._is_backfilling:
-            await self._backfill_pending_configs()
-
-    async def _backfill_pending_configs(self) -> None:
-        if self._configs is None:
-            return
-        pending = [
-            config
-            for records in self._configs.values()
-            for config in records
-            if (
-                config.condition_type == CONDITION_DAILY_STREAK
-                and not config.backfill_completed
-            )
-        ]
-        if pending:
-            logger.info(
-                "MessageMilestone: %d configs need backfill: ids=%s",
-                len(pending),
-                [config.id for config in pending],
-            )
-        self._is_backfilling = True
-        try:
-            for config in pending:
-                await self._backfill_config(config)
-        finally:
-            self._is_backfilling = False
-
-    async def _backfill_config(self, config: ChannelMessageMilestone) -> None:
-        logger.info(
-            "MessageMilestone: starting backfill config=%s channel=%s required=%s/day "
-            "days=%s condition=%s pattern=%r",
-            config.id,
-            config.channel_id,
-            config.daily_required_count,
-            config.required_days,
-            config.condition_type,
-            config.pattern.pattern if config.pattern else None,
-        )
-        channel = self.bot.get_channel(int(config.channel_id))
-        if channel is None:
-            logger.info(
-                "MessageMilestone: cannot backfill config %s; channel %s not cached",
-                config.id,
-                config.channel_id,
-            )
-            return
-        try:
-            sources = await self._backfill_sources(channel)
-        except discord.HTTPException as exc:
-            logger.info(
-                "MessageMilestone: failed to list backfill sources for config %s: %s",
-                config.id,
-                exc,
-            )
-            return
-        if not sources:
-            logger.info(
-                "MessageMilestone: cannot backfill config %s; "
-                "channel %s has no readable history",
-                config.id,
-                config.channel_id,
-            )
-            return
-        processed = 0
-        try:
-            remaining = _BACKFILL_HISTORY_LIMIT
-            for source in sources:
-                logger.info(
-                    "MessageMilestone: reading backfill source config=%s source=%s "
-                    "remaining_limit=%s",
-                    config.id,
-                    getattr(source, "id", type(source).__name__),
-                    remaining,
-                )
-                if remaining <= 0:
-                    break
-                async for message in source.history(limit=remaining):
-                    if self._message_is_before_today(message):
-                        break
-                    await self._track(message)
-                    processed += 1
-                    remaining -= 1
-                    if remaining <= 0:
-                        break
-        except discord.HTTPException as exc:
-            logger.info(
-                "MessageMilestone: failed to backfill config %s: %s", config.id, exc
-            )
-            return
-        async with async_session() as session:
-            await mark_message_milestone_backfill_completed(
-                session, config_id=config.id
-            )
-        logger.info(
-            "MessageMilestone: backfilled config %s with %d recent messages",
-            config.id,
-            processed,
-        )
-
-    def _message_is_before_today(self, message: discord.Message) -> bool:
-        return message_milestone_date(message.created_at) < message_milestone_date(None)
-
-    async def _backfill_sources(self, channel: object) -> list[discord.abc.Messageable]:
-        sources: list[discord.abc.Messageable] = []
-        if isinstance(channel, discord.abc.Messageable):
-            sources.append(channel)
-
-        threads = getattr(channel, "threads", None)
-        if threads:
-            sources.extend(
-                thread
-                for thread in threads
-                if isinstance(thread, discord.abc.Messageable)
-            )
-
-        archived_threads = getattr(channel, "archived_threads", None)
-        if callable(archived_threads):
-            async for thread in archived_threads(limit=_BACKFILL_HISTORY_LIMIT):
-                if isinstance(thread, discord.abc.Messageable):
-                    sources.append(thread)
-
-        return sources
 
     async def _ensure_recent_configs(self) -> None:
         if (
@@ -266,8 +138,7 @@ class MessageMilestoneCog(commands.Cog):
                 message.type,
             )
             return
-        if not self._is_backfilling:
-            await self._ensure_recent_configs()
+        await self._ensure_recent_configs()
         if self._configs is None:
             logger.info(
                 "MessageMilestone: ignored message %s because config cache is empty",
@@ -303,7 +174,7 @@ class MessageMilestoneCog(commands.Cog):
         logger.info(
             "MessageMilestone: tracking message=%s guild=%s channel=%s "
             "channel_candidates=%s author=%s content_len=%s content_preview=%r "
-            "config_ids=%s backfill=%s",
+            "config_ids=%s",
             message.id,
             message.guild.id,
             message.channel.id,
@@ -312,7 +183,6 @@ class MessageMilestoneCog(commands.Cog):
             len(message.content),
             _preview_text(message.content),
             [config.id for config in configs],
-            self._is_backfilling,
         )
 
         async with self._progress_lock, async_session() as session:

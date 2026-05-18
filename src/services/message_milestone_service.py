@@ -36,7 +36,6 @@ __all__ = [
     "normalize_embed_color",
     "normalize_milestone_text",
     "mark_message_milestone_reward_sent",
-    "mark_message_milestone_backfill_completed",
     "mark_message_milestone_consecutive_reward_sent",
     "mark_message_milestone_message_processed",
     "message_milestone_date",
@@ -71,7 +70,6 @@ class ChannelMessageMilestone:
     embed_description: str | None
     embed_color: int | None
     delete_after_seconds: int | None
-    backfill_completed: bool
     consecutive_notification_limit: str
     consecutive_notification_daily_limit: int
 
@@ -236,7 +234,6 @@ async def get_enabled_message_milestones(
                 embed_description=config.embed_description,
                 embed_color=config.embed_color,
                 delete_after_seconds=config.delete_after_seconds,
-                backfill_completed=config.backfill_completed,
                 consecutive_notification_limit=config.consecutive_notification_limit
                 or CONSECUTIVE_NOTIFY_EVERY_TIME,
                 consecutive_notification_daily_limit=_normalize_positive_count(
@@ -437,19 +434,6 @@ async def record_consecutive_message_and_get_reward(
         consecutive_count=db_config.consecutive_count,
         notification_limited=notification_limited,
     )
-
-
-async def mark_message_milestone_backfill_completed(
-    session: AsyncSession, *, config_id: int
-) -> None:
-    result = await session.execute(
-        select(MessageMilestoneConfig).where(MessageMilestoneConfig.id == config_id)
-    )
-    config = result.scalar_one_or_none()
-    if config is None:
-        return
-    config.backfill_completed = True
-    await session.commit()
 
 
 async def delete_message_milestone_state(
