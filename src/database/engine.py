@@ -22,9 +22,17 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 # 作られるが、既存テーブルへの ADD COLUMN は手動で当てる必要がある。
 _LATE_ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("auto_reaction_configs", "pattern", "TEXT"),
+    ("message_milestone_configs", "condition_type", "TEXT DEFAULT 'daily_streak'"),
     ("message_milestone_configs", "pattern", "TEXT"),
     ("message_milestone_configs", "delete_after_seconds", "INTEGER"),
     ("message_milestone_configs", "backfill_completed", "BOOLEAN DEFAULT FALSE"),
+    ("message_milestone_configs", "consecutive_user_id", "TEXT"),
+    ("message_milestone_configs", "consecutive_count", "INTEGER DEFAULT 0"),
+    (
+        "message_milestone_configs",
+        "consecutive_reward_sent",
+        "BOOLEAN DEFAULT FALSE",
+    ),
     ("message_milestone_progress", "reward_pending", "BOOLEAN DEFAULT FALSE"),
 ]
 

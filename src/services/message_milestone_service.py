@@ -33,8 +33,10 @@ __all__ = [
     "normalize_milestone_text",
     "mark_message_milestone_reward_sent",
     "mark_message_milestone_backfill_completed",
+    "mark_message_milestone_consecutive_reward_sent",
     "mark_message_milestone_message_processed",
     "message_milestone_date",
+    "record_consecutive_message_and_get_reward",
     "record_message_and_get_reward",
     "render_milestone_template",
     "validate_pattern",
@@ -51,6 +53,7 @@ _TOKYO = ZoneInfo("Asia/Tokyo")
 class ChannelMessageMilestone:
     id: int
     channel_id: str
+    condition_type: str
     daily_required_count: int
     required_days: int
     pattern: re.Pattern[str] | None
@@ -71,6 +74,7 @@ class MilestoneProgressResult:
     duplicate: bool = False
     crossed_daily_goal: bool = False
     reward_pending: bool = False
+    consecutive_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -177,6 +181,7 @@ async def get_enabled_message_milestones(
             ChannelMessageMilestone(
                 id=config.id,
                 channel_id=config.channel_id,
+                condition_type=config.condition_type,
                 daily_required_count=config.daily_required_count,
                 required_days=config.required_days,
                 pattern=compile_pattern(config.pattern),
@@ -302,6 +307,60 @@ async def record_message_and_get_reward(
     )
 
 
+async def record_consecutive_message_and_get_reward(
+    session: AsyncSession,
+    *,
+    config: ChannelMessageMilestone,
+    user_id: str,
+    message_id: str | None = None,
+) -> MilestoneProgressResult:
+    if message_id is not None:
+        was_new = await mark_message_milestone_message_processed(
+            session, config_id=config.id, message_id=message_id
+        )
+        if not was_new:
+            await session.commit()
+            return MilestoneProgressResult(
+                should_send=False,
+                streak_days=0,
+                daily_count=0,
+                duplicate=True,
+            )
+
+    result = await session.execute(
+        select(MessageMilestoneConfig).where(MessageMilestoneConfig.id == config.id)
+    )
+    db_config = result.scalar_one_or_none()
+    if db_config is None:
+        await session.commit()
+        return MilestoneProgressResult(
+            should_send=False,
+            streak_days=0,
+            daily_count=0,
+        )
+
+    if db_config.consecutive_user_id == user_id:
+        db_config.consecutive_count += 1
+    else:
+        db_config.consecutive_user_id = user_id
+        db_config.consecutive_count = 1
+        db_config.consecutive_reward_sent = False
+
+    should_send = (
+        db_config.consecutive_count >= config.daily_required_count
+        and not db_config.consecutive_reward_sent
+    )
+    await session.commit()
+    return MilestoneProgressResult(
+        should_send=should_send,
+        streak_days=0,
+        daily_count=db_config.consecutive_count,
+        crossed_daily_goal=should_send,
+        reward_pending=should_send,
+        consecutive_count=db_config.consecutive_count,
+    )
+
+
 async def mark_message_milestone_backfill_completed(
     session: AsyncSession, *, config_id: int
 ) -> None:
@@ -329,6 +388,14 @@ async def delete_message_milestone_state(
             MessageMilestoneProcessedMessage.config_id == config_id
         )
     )
+    result = await session.execute(
+        select(MessageMilestoneConfig).where(MessageMilestoneConfig.id == config_id)
+    )
+    config = result.scalar_one_or_none()
+    if config is not None:
+        config.consecutive_user_id = None
+        config.consecutive_count = 0
+        config.consecutive_reward_sent = False
 
 
 async def mark_message_milestone_reward_sent(
@@ -345,4 +412,17 @@ async def mark_message_milestone_reward_sent(
         return
     progress.reward_pending = False
     progress.reward_sent = True
+    await session.commit()
+
+
+async def mark_message_milestone_consecutive_reward_sent(
+    session: AsyncSession, *, config_id: int
+) -> None:
+    result = await session.execute(
+        select(MessageMilestoneConfig).where(MessageMilestoneConfig.id == config_id)
+    )
+    config = result.scalar_one_or_none()
+    if config is None:
+        return
+    config.consecutive_reward_sent = True
     await session.commit()

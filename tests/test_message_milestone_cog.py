@@ -16,6 +16,7 @@ def _config() -> ChannelMessageMilestone:
     return ChannelMessageMilestone(
         id=1,
         channel_id="123",
+        condition_type="daily_streak",
         daily_required_count=7,
         required_days=3,
         pattern=None,
@@ -56,6 +57,26 @@ def test_rendered_reward_is_not_sendable_after_template_expands_too_long() -> No
     rendered = cog._render_reward(config, author)
 
     assert not cog._rendered_reward_is_sendable(config, rendered)
+
+
+def test_embed_fallback_content_uses_rendered_embed_fields() -> None:
+    author = MagicMock()
+    author.display_name = "Itsuka"
+    author.name = "fallback"
+    cog = MessageMilestoneCog(MagicMock())
+    config = ChannelMessageMilestone(
+        **{
+            **_config().__dict__,
+            "response_type": "embed",
+            "message_content": None,
+            "embed_title": "{username} さん",
+            "embed_description": "{n} 回達成",
+        }
+    )
+
+    rendered = cog._render_reward(config, author)
+
+    assert cog._embed_fallback_content(rendered) == "Itsuka さん\n7 回達成"
 
 
 def test_countdown_step_updates_every_second() -> None:

@@ -35,6 +35,7 @@ def _serialize(config: MessageMilestoneConfig) -> dict[str, Any]:
         "id": config.id,
         "guild_id": config.guild_id,
         "channel_id": config.channel_id,
+        "condition_type": config.condition_type,
         "daily_required_count": config.daily_required_count,
         "required_days": config.required_days,
         "pattern": config.pattern,
@@ -54,6 +55,7 @@ def _serialize(config: MessageMilestoneConfig) -> dict[str, Any]:
 class _MessageMilestoneRequest(BaseModel):
     guild_id: str | None = None
     channel_id: str | None = None
+    condition_type: str = "daily_streak"
     daily_required_count: int
     required_days: int
     pattern: str | None = None
@@ -68,9 +70,13 @@ class _MessageMilestoneRequest(BaseModel):
 async def _normalize_body(
     body: _MessageMilestoneRequest,
 ) -> tuple[dict[str, Any], str | None]:
+    if body.condition_type not in {"daily_streak", "consecutive_posts"}:
+        return {}, "達成条件を選択してください"
     if body.daily_required_count < 1 or body.daily_required_count > 999:
-        return {}, "1日あたりの投稿数は 1〜999 で指定してください"
-    if body.required_days < 1 or body.required_days > 365:
+        return {}, "投稿数は 1〜999 で指定してください"
+    if body.condition_type == "daily_streak" and (
+        body.required_days < 1 or body.required_days > 365
+    ):
         return {}, "継続日数は 1〜365 で指定してください"
     if body.response_type not in {"plain", "embed"}:
         return {}, "送信形式は通常メッセージまたは埋め込みを選んでください"
@@ -109,8 +115,11 @@ async def _normalize_body(
         return {}, "埋め込みはタイトルか説明のどちらかを入力してください"
 
     return {
+        "condition_type": body.condition_type,
         "daily_required_count": body.daily_required_count,
-        "required_days": body.required_days,
+        "required_days": body.required_days
+        if body.condition_type == "daily_streak"
+        else 1,
         "pattern": pattern,
         "response_type": body.response_type,
         "message_content": message_content,
@@ -142,6 +151,7 @@ async def api_message_milestone_list(
                 "id": config.id,
                 "guild_id": config.guild_id,
                 "channel_id": config.channel_id,
+                "condition_type": config.condition_type,
                 "enabled": config.enabled,
                 "pattern": config.pattern,
                 "backfill_completed": config.backfill_completed,
@@ -198,17 +208,20 @@ async def api_message_milestone_create(
         channel_id=body.channel_id,
         **values,
     )
+    config.backfill_completed = values["condition_type"] == "consecutive_posts"
     db.add(config)
     await db.commit()
     _security.record_form_submit(user_id, path)
     await db.refresh(config)
     logger.info(
         "MessageMilestone API: created config=%s user=%s guild=%s channel=%s "
-        "required=%s/day days=%s pattern=%r response_type=%s delete_after=%s",
+        "condition=%s required=%s days=%s pattern=%r response_type=%s "
+        "delete_after=%s",
         config.id,
         user_id,
         config.guild_id,
         config.channel_id,
+        config.condition_type,
         config.daily_required_count,
         config.required_days,
         config.pattern,
@@ -259,18 +272,19 @@ async def api_message_milestone_update(
     )
     for key, value in values.items():
         setattr(config, key, value)
-    config.backfill_completed = False
+    config.backfill_completed = values["condition_type"] == "consecutive_posts"
     await db.commit()
     _security.record_form_submit(user_id, path)
     await db.refresh(config)
     logger.info(
         "MessageMilestone API: updated config=%s user=%s guild=%s channel=%s "
-        "required=%s/day days=%s pattern=%r response_type=%s delete_after=%s "
-        "backfill_completed=%s",
+        "condition=%s required=%s days=%s pattern=%r response_type=%s "
+        "delete_after=%s backfill_completed=%s",
         config.id,
         user_id,
         config.guild_id,
         config.channel_id,
+        config.condition_type,
         config.daily_required_count,
         config.required_days,
         config.pattern,

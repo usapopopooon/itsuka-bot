@@ -18,8 +18,10 @@ from src.services.message_milestone_service import (
     MilestoneTemplateContext,
     get_enabled_message_milestones,
     mark_message_milestone_backfill_completed,
+    mark_message_milestone_consecutive_reward_sent,
     mark_message_milestone_reward_sent,
     message_milestone_date,
+    record_consecutive_message_and_get_reward,
     record_message_and_get_reward,
     render_milestone_template,
 )
@@ -99,7 +101,7 @@ class MessageMilestoneCog(commands.Cog):
             config
             for records in self._configs.values()
             for config in records
-            if not config.backfill_completed
+            if config.condition_type == "daily_streak" and not config.backfill_completed
         ]
         if pending:
             logger.info(
@@ -117,11 +119,12 @@ class MessageMilestoneCog(commands.Cog):
     async def _backfill_config(self, config: ChannelMessageMilestone) -> None:
         logger.info(
             "MessageMilestone: starting backfill config=%s channel=%s required=%s/day "
-            "days=%s pattern=%r",
+            "days=%s condition=%s pattern=%r",
             config.id,
             config.channel_id,
             config.daily_required_count,
             config.required_days,
+            config.condition_type,
             config.pattern.pattern if config.pattern else None,
         )
         channel = self.bot.get_channel(int(config.channel_id))
@@ -336,13 +339,21 @@ class MessageMilestoneCog(commands.Cog):
                     config.pattern.pattern if config.pattern else None,
                 )
                 try:
-                    result = await record_message_and_get_reward(
-                        session,
-                        config=config,
-                        user_id=str(message.author.id),
-                        created_at=message.created_at,
-                        message_id=str(message.id),
-                    )
+                    if config.condition_type == "consecutive_posts":
+                        result = await record_consecutive_message_and_get_reward(
+                            session,
+                            config=config,
+                            user_id=str(message.author.id),
+                            message_id=str(message.id),
+                        )
+                    else:
+                        result = await record_message_and_get_reward(
+                            session,
+                            config=config,
+                            user_id=str(message.author.id),
+                            created_at=message.created_at,
+                            message_id=str(message.id),
+                        )
                 except Exception:
                     logger.exception(
                         "MessageMilestone: failed to record progress for config %s",
@@ -351,15 +362,19 @@ class MessageMilestoneCog(commands.Cog):
                     continue
                 logger.info(
                     "MessageMilestone: progress config=%s user=%s message=%s "
-                    "daily=%s/%s streak=%s/%s crossed_daily_goal=%s "
+                    "condition=%s daily=%s/%s streak=%s/%s consecutive=%s/%s "
+                    "crossed_daily_goal=%s "
                     "reward_pending=%s duplicate=%s should_send=%s",
                     config.id,
                     message.author.id,
                     message.id,
+                    config.condition_type,
                     result.daily_count,
                     config.daily_required_count,
                     result.streak_days,
                     config.required_days,
+                    result.consecutive_count,
+                    config.daily_required_count,
                     result.crossed_daily_goal,
                     result.reward_pending,
                     result.duplicate,
@@ -386,11 +401,17 @@ class MessageMilestoneCog(commands.Cog):
                         message.channel, config, message.author
                     )
                     if sent:
-                        await mark_message_milestone_reward_sent(
-                            session,
-                            config_id=config.id,
-                            user_id=str(message.author.id),
-                        )
+                        if config.condition_type == "consecutive_posts":
+                            await mark_message_milestone_consecutive_reward_sent(
+                                session,
+                                config_id=config.id,
+                            )
+                        else:
+                            await mark_message_milestone_reward_sent(
+                                session,
+                                config_id=config.id,
+                                user_id=str(message.author.id),
+                            )
                         logger.info(
                             "MessageMilestone: marked reward sent config=%s user=%s",
                             config.id,
@@ -424,7 +445,48 @@ class MessageMilestoneCog(commands.Cog):
                 return False
             if config.response_type == "embed":
                 embed = self._build_embed(config, rendered, config.delete_after_seconds)
-                sent = await channel.send(content=rendered.content, embed=embed)
+                try:
+                    sent = await channel.send(content=rendered.content, embed=embed)
+                except discord.Forbidden as exc:
+                    logger.info(
+                        "MessageMilestone: failed to send embed reward for config %s "
+                        "because Discord rejected it; check the bot's Send Messages "
+                        "and Embed Links permissions. Falling back to plain "
+                        "message: %s",
+                        config.id,
+                        exc,
+                    )
+                    fallback = self._embed_fallback_content(rendered)
+                    if len(fallback) > MAX_MILESTONE_MESSAGE_LENGTH:
+                        logger.info(
+                            "MessageMilestone: embed fallback too long for config %s "
+                            "fallback_len=%s",
+                            config.id,
+                            len(fallback),
+                        )
+                        return False
+                    sent = await channel.send(
+                        self._with_countdown_content(
+                            fallback, config.delete_after_seconds
+                        )
+                    )
+                    self._schedule_delete_countdown(
+                        sent,
+                        config,
+                        _RenderedReward(
+                            content=fallback,
+                            embed_title=None,
+                            embed_description=None,
+                        ),
+                        force_plain=True,
+                    )
+                    logger.info(
+                        "MessageMilestone: sent plain fallback for embed config %s "
+                        "message=%s",
+                        config.id,
+                        sent.id,
+                    )
+                    return True
                 self._schedule_delete_countdown(sent, config, rendered)
                 logger.info(
                     "MessageMilestone: sent embed reward for config %s message=%s",
@@ -451,6 +513,18 @@ class MessageMilestoneCog(commands.Cog):
                 exc,
             )
             return False
+
+    def _embed_fallback_content(self, rendered: _RenderedReward) -> str:
+        parts = [
+            part
+            for part in (
+                rendered.content,
+                rendered.embed_title,
+                rendered.embed_description,
+            )
+            if part
+        ]
+        return "\n".join(parts) or "達成しました"
 
     def _message_channel_ids(self, message: discord.Message) -> list[str]:
         """設定照合に使う channel id 候補を返す。
@@ -487,6 +561,8 @@ class MessageMilestoneCog(commands.Cog):
         message: discord.Message,
         config: ChannelMessageMilestone,
         rendered: _RenderedReward,
+        *,
+        force_plain: bool = False,
     ) -> None:
         if config.delete_after_seconds is None:
             return
@@ -498,7 +574,9 @@ class MessageMilestoneCog(commands.Cog):
             config.delete_after_seconds,
         )
         task = asyncio.create_task(
-            self._delete_with_countdown(message, config, rendered)
+            self._delete_with_countdown(
+                message, config, rendered, force_plain=force_plain
+            )
         )
         self._delete_tasks.add(task)
         task.add_done_callback(self._delete_tasks.discard)
@@ -508,6 +586,8 @@ class MessageMilestoneCog(commands.Cog):
         message: discord.Message,
         config: ChannelMessageMilestone,
         rendered: _RenderedReward,
+        *,
+        force_plain: bool = False,
     ) -> None:
         if config.delete_after_seconds is None:
             return
@@ -517,7 +597,7 @@ class MessageMilestoneCog(commands.Cog):
                 step = self._countdown_step_seconds(remaining)
                 await asyncio.sleep(step)
                 remaining = max(remaining - step, 1)
-                if config.response_type == "embed":
+                if config.response_type == "embed" and not force_plain:
                     await message.edit(
                         content=rendered.content,
                         embed=self._build_embed(config, rendered, remaining),

@@ -20,6 +20,35 @@ import { DeleteButton } from '@/components/delete-button'
 import { GuildChannelSelector } from '@/components/guild-channel-selector'
 import { ToggleButton } from '@/components/toggle-button'
 
+type ConditionType = 'daily_streak' | 'consecutive_posts'
+
+const DEFAULT_PLAIN_MESSAGES: Record<ConditionType, string> = {
+  consecutive_posts: '{username} さんが {n} 回連続投稿しました！',
+  daily_streak: '{username} さんが1日 {n} 回投稿を達成しました！',
+}
+
+const DEFAULT_EMBED_TITLES: Record<ConditionType, string> = {
+  consecutive_posts: '{username} さん、連続投稿達成！',
+  daily_streak: '{username} さん、投稿習慣達成！',
+}
+
+const DEFAULT_EMBED_DESCRIPTIONS: Record<ConditionType, string> = {
+  consecutive_posts: '{n} 回連続で投稿しました。',
+  daily_streak: '1日 {n} 回の投稿を達成しました。',
+}
+
+function conditionHelp(conditionType: ConditionType) {
+  return conditionType === 'consecutive_posts'
+    ? '同じユーザーの対象投稿がN回続いたら通知します。別ユーザーの対象投稿が入るとリセットします。'
+    : '同じユーザーが1日N回以上の投稿をN日続けたら通知します。'
+}
+
+function conditionSummary(row: MessageMilestoneConfig) {
+  return row.condition_type === 'consecutive_posts'
+    ? `${row.daily_required_count}回連続投稿`
+    : `1日${row.daily_required_count}回 x ${row.required_days}日`
+}
+
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId
 }
@@ -45,14 +74,17 @@ export default function MessageMilestonePage() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [selectedGuild, setSelectedGuild] = useState('')
   const [selectedChannel, setSelectedChannel] = useState('')
+  const [conditionType, setConditionType] = useState<ConditionType>('consecutive_posts')
   const [dailyRequiredCount, setDailyRequiredCount] = useState('1')
   const [requiredDays, setRequiredDays] = useState('1')
   const [pattern, setPattern] = useState('')
   const [patternProbe, setPatternProbe] = useState('てすと')
   const [responseType, setResponseType] = useState<'plain' | 'embed'>('plain')
-  const [messageContent, setMessageContent] = useState('')
-  const [embedTitle, setEmbedTitle] = useState('')
-  const [embedDescription, setEmbedDescription] = useState('')
+  const [messageContent, setMessageContent] = useState(DEFAULT_PLAIN_MESSAGES.consecutive_posts)
+  const [embedTitle, setEmbedTitle] = useState(DEFAULT_EMBED_TITLES.consecutive_posts)
+  const [embedDescription, setEmbedDescription] = useState(
+    DEFAULT_EMBED_DESCRIPTIONS.consecutive_posts
+  )
   const [embedColor, setEmbedColor] = useState('#22C55E')
   const [deleteAfterSeconds, setDeleteAfterSeconds] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -106,14 +138,15 @@ export default function MessageMilestonePage() {
     setEditingId(null)
     setSelectedGuild('')
     setSelectedChannel('')
+    setConditionType('consecutive_posts')
     setDailyRequiredCount('1')
     setRequiredDays('1')
     setPattern('')
     setPatternProbe('てすと')
     setResponseType('plain')
-    setMessageContent('')
-    setEmbedTitle('')
-    setEmbedDescription('')
+    setMessageContent(DEFAULT_PLAIN_MESSAGES.consecutive_posts)
+    setEmbedTitle(DEFAULT_EMBED_TITLES.consecutive_posts)
+    setEmbedDescription(DEFAULT_EMBED_DESCRIPTIONS.consecutive_posts)
     setEmbedColor('#22C55E')
     setDeleteAfterSeconds('')
     setError('')
@@ -123,6 +156,7 @@ export default function MessageMilestonePage() {
     setEditingId(row.id)
     setSelectedGuild(row.guild_id)
     setSelectedChannel(row.channel_id)
+    setConditionType(row.condition_type)
     setDailyRequiredCount(String(row.daily_required_count))
     setRequiredDays(String(row.required_days))
     setPattern(row.pattern ?? '')
@@ -136,6 +170,36 @@ export default function MessageMilestonePage() {
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  function handleConditionTypeChange(next: ConditionType) {
+    setConditionType(next)
+    const defaultPlainValues = Object.values(DEFAULT_PLAIN_MESSAGES)
+    const defaultEmbedTitles = Object.values(DEFAULT_EMBED_TITLES)
+    const defaultEmbedDescriptions = Object.values(DEFAULT_EMBED_DESCRIPTIONS)
+
+    if (!messageContent.trim() || defaultPlainValues.includes(messageContent)) {
+      setMessageContent(DEFAULT_PLAIN_MESSAGES[next])
+    }
+    if (!embedTitle.trim() || defaultEmbedTitles.includes(embedTitle)) {
+      setEmbedTitle(DEFAULT_EMBED_TITLES[next])
+    }
+    if (!embedDescription.trim() || defaultEmbedDescriptions.includes(embedDescription)) {
+      setEmbedDescription(DEFAULT_EMBED_DESCRIPTIONS[next])
+    }
+  }
+
+  function handleResponseTypeChange(next: 'plain' | 'embed') {
+    setResponseType(next)
+    if (next === 'plain' && !messageContent.trim()) {
+      setMessageContent(DEFAULT_PLAIN_MESSAGES[conditionType])
+    }
+    if (next === 'embed') {
+      if (!embedTitle.trim()) setEmbedTitle(DEFAULT_EMBED_TITLES[conditionType])
+      if (!embedDescription.trim()) {
+        setEmbedDescription(DEFAULT_EMBED_DESCRIPTIONS[conditionType])
+      }
+    }
+  }
+
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault()
     setError('')
@@ -146,9 +210,21 @@ export default function MessageMilestonePage() {
       setError('投稿数と日数は整数で入力してください')
       return
     }
+    if (daily < 1 || daily > 999) {
+      setError('投稿数は 1〜999 で入力してください')
+      return
+    }
+    if (conditionType === 'daily_streak' && (days < 1 || days > 365)) {
+      setError('継続日数は 1〜365 で入力してください')
+      return
+    }
     const deleteAfter = deleteAfterSeconds.trim() ? Number(deleteAfterSeconds) : null
     if (deleteAfter !== null && !Number.isInteger(deleteAfter)) {
       setError('自動削除の秒数は整数で入力してください')
+      return
+    }
+    if (deleteAfter !== null && (deleteAfter < 1 || deleteAfter > 300)) {
+      setError('自動削除秒数は 1〜300 で入力してください')
       return
     }
     setSubmitting(true)
@@ -161,8 +237,9 @@ export default function MessageMilestonePage() {
       const payload = {
         guild_id: selectedGuild,
         channel_id: selectedChannel,
+        condition_type: conditionType,
         daily_required_count: daily,
-        required_days: days,
+        required_days: conditionType === 'daily_streak' ? days : 1,
         pattern: pattern.trim() || null,
         response_type: responseType,
         message_content: messageContent.trim() || null,
@@ -210,7 +287,7 @@ export default function MessageMilestonePage() {
       header: 'Condition',
       accessor: (row) => (
         <div className="space-y-1 text-sm">
-          <div>{`${row.daily_required_count} posts/day x ${row.required_days} days`}</div>
+          <div>{conditionSummary(row)}</div>
           {row.pattern ? <code className="text-xs">{row.pattern}</code> : null}
         </div>
       ),
@@ -309,13 +386,30 @@ export default function MessageMilestonePage() {
                 />
               )}
 
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">達成条件</label>
+                <Select
+                  value={conditionType}
+                  onValueChange={(v) => handleConditionTypeChange(v as ConditionType)}
+                >
+                  <SelectTrigger className="w-full md:w-80">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="consecutive_posts">N回連続投稿</SelectItem>
+                    <SelectItem value="daily_streak">1日N回 x N日</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-xs text-muted-foreground">{conditionHelp(conditionType)}</p>
+              </div>
+
               <div className="grid gap-3 md:grid-cols-2">
                 <div>
                   <label
                     htmlFor="daily-required-count"
                     className="mb-1.5 block text-sm font-medium"
                   >
-                    1日あたりの投稿数
+                    {conditionType === 'consecutive_posts' ? '連続投稿数' : '1日あたりの投稿数'}
                   </label>
                   <Input
                     id="daily-required-count"
@@ -326,19 +420,21 @@ export default function MessageMilestonePage() {
                     onChange={(e) => setDailyRequiredCount(e.target.value)}
                   />
                 </div>
-                <div>
-                  <label htmlFor="required-days" className="mb-1.5 block text-sm font-medium">
-                    継続日数
-                  </label>
-                  <Input
-                    id="required-days"
-                    type="number"
-                    min="1"
-                    max="365"
-                    value={requiredDays}
-                    onChange={(e) => setRequiredDays(e.target.value)}
-                  />
-                </div>
+                {conditionType === 'daily_streak' && (
+                  <div>
+                    <label htmlFor="required-days" className="mb-1.5 block text-sm font-medium">
+                      継続日数
+                    </label>
+                    <Input
+                      id="required-days"
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={requiredDays}
+                      onChange={(e) => setRequiredDays(e.target.value)}
+                    />
+                  </div>
+                )}
               </div>
 
               <div>
@@ -357,6 +453,7 @@ export default function MessageMilestonePage() {
                 <p className="mt-1 text-xs text-muted-foreground">
                   本文がこの正規表現にマッチした投稿だけをN回のカウント対象にします。
                   フィルタを使う場合は Bot の Message Content Intent が必要です。
+                  連続投稿モードでは、フィルタ対象外の投稿は連続判定に含めません。
                 </p>
                 <div className="mt-2 grid gap-2 md:grid-cols-[1fr_auto]">
                   <Input
@@ -404,7 +501,7 @@ export default function MessageMilestonePage() {
                 <label className="mb-1.5 block text-sm font-medium">送信形式</label>
                 <Select
                   value={responseType}
-                  onValueChange={(v) => setResponseType(v as 'plain' | 'embed')}
+                  onValueChange={(v) => handleResponseTypeChange(v as 'plain' | 'embed')}
                 >
                   <SelectTrigger className="w-full md:w-64">
                     <SelectValue />
@@ -432,7 +529,7 @@ export default function MessageMilestonePage() {
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
                   テンプレート変数: <code>{'{username}'}</code> はユーザー名、
-                  <code>{'{n}'}</code> は1日あたりの投稿数に置き換わります。
+                  <code>{'{n}'}</code> は設定した投稿数に置き換わります。
                 </p>
               </div>
 

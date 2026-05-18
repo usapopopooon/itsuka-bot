@@ -29,6 +29,7 @@ export interface MessageMilestoneConfig {
   id: number
   guild_id: string
   channel_id: string
+  condition_type: 'daily_streak' | 'consecutive_posts'
   daily_required_count: number
   required_days: number
   pattern: string | null

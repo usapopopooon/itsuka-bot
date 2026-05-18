@@ -62,6 +62,9 @@ class MessageMilestoneConfig(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     channel_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    condition_type: Mapped[str] = mapped_column(
+        String, default="daily_streak", nullable=False
+    )
     daily_required_count: Mapped[int] = mapped_column(Integer, nullable=False)
     required_days: Mapped[int] = mapped_column(Integer, nullable=False)
     pattern: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -72,6 +75,11 @@ class MessageMilestoneConfig(Base):
     embed_color: Mapped[int | None] = mapped_column(Integer, nullable=True)
     delete_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     backfill_completed: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    consecutive_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    consecutive_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    consecutive_reward_sent: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

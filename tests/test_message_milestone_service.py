@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.database.models import (
     Base,
+    MessageMilestoneConfig,
     MessageMilestoneProcessedMessage,
     MessageMilestoneProgress,
 )
@@ -19,6 +20,7 @@ from src.services.message_milestone_service import (
     delete_message_milestone_state,
     mark_message_milestone_reward_sent,
     normalize_embed_color,
+    record_consecutive_message_and_get_reward,
     record_message_and_get_reward,
     render_milestone_template,
     validate_pattern,
@@ -29,6 +31,7 @@ def _config(*, daily: int = 2, days: int = 2) -> ChannelMessageMilestone:
     return ChannelMessageMilestone(
         id=1,
         channel_id="123",
+        condition_type="daily_streak",
         daily_required_count=daily,
         required_days=days,
         pattern=None,
@@ -167,6 +170,77 @@ async def test_delete_message_milestone_state_removes_progress_and_processed(
 
     assert progress.scalars().all() == []
     assert processed.scalars().all() == []
+
+
+async def test_record_consecutive_message_sends_after_same_user_reaches_goal(
+    session_factory,
+) -> None:
+    config = ChannelMessageMilestone(
+        **{**_config(daily=3, days=1).__dict__, "condition_type": "consecutive_posts"}
+    )
+
+    async with session_factory() as session:
+        session.add(
+            MessageMilestoneConfig(
+                id=config.id,
+                guild_id="g1",
+                channel_id=config.channel_id,
+                condition_type=config.condition_type,
+                daily_required_count=config.daily_required_count,
+                required_days=1,
+                response_type="plain",
+                message_content="done",
+                backfill_completed=True,
+            )
+        )
+        await session.commit()
+        first = await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", message_id="m1"
+        )
+        second = await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", message_id="m2"
+        )
+        third = await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", message_id="m3"
+        )
+
+    assert not first.should_send
+    assert not second.should_send
+    assert third.should_send
+    assert third.consecutive_count == 3
+
+
+async def test_record_consecutive_message_resets_when_user_changes(
+    session_factory,
+) -> None:
+    config = ChannelMessageMilestone(
+        **{**_config(daily=2, days=1).__dict__, "condition_type": "consecutive_posts"}
+    )
+
+    async with session_factory() as session:
+        session.add(
+            MessageMilestoneConfig(
+                id=config.id,
+                guild_id="g1",
+                channel_id=config.channel_id,
+                condition_type=config.condition_type,
+                daily_required_count=config.daily_required_count,
+                required_days=1,
+                response_type="plain",
+                message_content="done",
+                backfill_completed=True,
+            )
+        )
+        await session.commit()
+        await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u1", message_id="m1"
+        )
+        reset = await record_consecutive_message_and_get_reward(
+            session, config=config, user_id="u2", message_id="m2"
+        )
+
+    assert not reset.should_send
+    assert reset.consecutive_count == 1
 
 
 def test_normalize_embed_color_accepts_hash_hex() -> None:
