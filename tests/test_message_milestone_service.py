@@ -58,10 +58,10 @@ async def session_factory():
         await engine.dispose()
 
 
-async def test_record_message_sends_after_daily_goal_for_required_days(
+async def test_record_message_sends_each_day_when_daily_goal_is_reached(
     session_factory,
 ) -> None:
-    config = _config(daily=2, days=2)
+    config = _config(daily=2, days=7)
     day1 = datetime(2026, 5, 18, 1, tzinfo=UTC)
     day2 = datetime(2026, 5, 19, 1, tzinfo=UTC)
 
@@ -72,6 +72,9 @@ async def test_record_message_sends_after_daily_goal_for_required_days(
         second = await record_message_and_get_reward(
             session, config=config, user_id="u1", created_at=day1
         )
+        await mark_message_milestone_reward_sent(
+            session, config_id=config.id, user_id="u1"
+        )
         third = await record_message_and_get_reward(
             session, config=config, user_id="u1", created_at=day2
         )
@@ -80,13 +83,13 @@ async def test_record_message_sends_after_daily_goal_for_required_days(
         )
 
     assert not first.should_send
-    assert not second.should_send
+    assert second.should_send
     assert not third.should_send
     assert fourth.should_send
     assert fourth.streak_days == 2
 
 
-async def test_record_message_only_sends_once_per_streak(session_factory) -> None:
+async def test_record_message_only_sends_once_per_day_goal(session_factory) -> None:
     config = _config(daily=1, days=1)
     day1 = datetime(2026, 5, 18, 1, tzinfo=UTC)
     day2 = datetime(2026, 5, 19, 1, tzinfo=UTC)
@@ -107,7 +110,8 @@ async def test_record_message_only_sends_once_per_streak(session_factory) -> Non
 
     assert first.should_send
     assert not second.should_send
-    assert not third.should_send
+    assert third.should_send
+    assert third.streak_days == 2
 
 
 async def test_pending_reward_retries_until_marked_sent(session_factory) -> None:
@@ -146,7 +150,7 @@ async def test_record_message_resets_after_missed_day(session_factory) -> None:
             session, config=config, user_id="u1", created_at=day3
         )
 
-    assert not result.should_send
+    assert result.should_send
     assert result.streak_days == 1
 
 

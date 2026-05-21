@@ -30,7 +30,7 @@ const CONDITION_LABELS: Record<ConditionType, string> = {
 
 const DEFAULT_PLAIN_MESSAGES: Record<ConditionType, string> = {
   consecutive_posts: '{username} さん、連続 {current_count} 回目です！',
-  daily_streak: '{username} さんが1日 {n} 回投稿を達成しました！',
+  daily_streak: '{username} さん、{current_count}日コンボ！ 1日 {n} 回達成です！',
 }
 
 const DEFAULT_EMBED_TITLES: Record<ConditionType, string> = {
@@ -40,13 +40,13 @@ const DEFAULT_EMBED_TITLES: Record<ConditionType, string> = {
 
 const DEFAULT_EMBED_DESCRIPTIONS: Record<ConditionType, string> = {
   consecutive_posts: 'いま連続 {current_count} 回目です。',
-  daily_streak: '1日 {n} 回の投稿を達成しました。',
+  daily_streak: '1日 {n} 回の投稿を{current_count}日連続で達成しました。',
 }
 
 function conditionHelp(conditionType: ConditionType) {
   return conditionType === 'consecutive_posts'
     ? '同じユーザーの対象投稿がN回続いたら通知を始めます。通知頻度で、毎回通知するか1日N回までに抑えるかを選べます。別ユーザーの対象投稿が入るとリセットします。'
-    : '同じユーザーが1日N回以上の投稿をN日続けたら通知します。'
+    : '同じユーザーが1日N回以上の投稿を達成した日ごとに通知します。{current_count} で現在のコンボ日数を表示できます。'
 }
 
 function conditionSummary(row: MessageMilestoneConfig) {
@@ -145,9 +145,11 @@ export default function MessageMilestonePage() {
   const messagePreview = useMemo(() => {
     const threshold = dailyRequiredCount.trim() || 'N'
     const currentCount =
-      conditionType === 'consecutive_posts' && Number.isFinite(Number(dailyRequiredCount))
-        ? String(Math.max(Number(dailyRequiredCount), 1))
-        : threshold
+      conditionType === 'consecutive_posts'
+        ? Number.isFinite(Number(dailyRequiredCount))
+          ? String(Math.max(Number(dailyRequiredCount), 1))
+          : threshold
+        : requiredDays.trim() || 'N'
 
     return {
       content: messageContent.trim() ? renderTemplate(messageContent, threshold, currentCount) : '',
@@ -156,7 +158,7 @@ export default function MessageMilestonePage() {
         ? renderTemplate(embedDescription, threshold, currentCount)
         : '',
     }
-  }, [conditionType, dailyRequiredCount, embedDescription, embedTitle, messageContent])
+  }, [conditionType, dailyRequiredCount, embedDescription, embedTitle, messageContent, requiredDays])
   const formSummary = useMemo(() => {
     const count = dailyRequiredCount.trim() || 'N'
     if (conditionType === 'consecutive_posts') {
@@ -166,7 +168,7 @@ export default function MessageMilestonePage() {
           : '連続投稿ごとに毎回'
       return `${count}回目から連続達成を通知 / ${limit}`
     }
-    return `1日${count}回を${requiredDays.trim() || 'N'}日続けたら通知`
+    return `1日${count}回達成ごとに通知 / 目標 ${requiredDays.trim() || 'N'}日コンボ`
   }, [
     conditionType,
     consecutiveNotificationDailyLimit,
@@ -662,8 +664,8 @@ export default function MessageMilestonePage() {
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
                   テンプレート変数: <code>{'{username}'}</code> はユーザー名、
-                  <code>{'{n}'}</code> は設定した投稿数に置き換わります。 連続投稿モードでは{' '}
-                  <code>{'{current_count}'}</code> が現在の連続回数です。
+                  <code>{'{n}'}</code> は設定した投稿数、
+                  <code>{'{current_count}'}</code> は現在の連続回数/コンボ日数です。
                 </p>
               </div>
 

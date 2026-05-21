@@ -277,7 +277,7 @@ class MessageMilestoneCog(commands.Cog):
                     current_count = (
                         result.consecutive_count
                         if config.condition_type == CONDITION_CONSECUTIVE_POSTS
-                        else None
+                        else result.streak_days
                     )
                     sent = await self._send_reward(
                         message.channel,

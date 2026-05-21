@@ -334,8 +334,8 @@ async def record_message_and_get_reward(
             and progress.daily_count >= config.daily_required_count
         )
         progress.streak_days = progress.streak_days if continues else 0
-        progress.reward_pending = progress.reward_pending if continues else False
-        progress.reward_sent = progress.reward_sent if continues else False
+        progress.reward_pending = False
+        progress.reward_sent = False
         progress.last_counted_date = today
         progress.daily_count = 0
         previous_count = 0
@@ -348,11 +348,7 @@ async def record_message_and_get_reward(
     if crossed_daily_goal:
         progress.streak_days += 1
 
-    if (
-        crossed_daily_goal
-        and progress.streak_days >= config.required_days
-        and not progress.reward_sent
-    ):
+    if crossed_daily_goal and not progress.reward_sent:
         progress.reward_pending = True
 
     should_send = progress.reward_pending and not progress.reward_sent
