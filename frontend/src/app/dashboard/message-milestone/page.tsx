@@ -158,7 +158,14 @@ export default function MessageMilestonePage() {
         ? renderTemplate(embedDescription, threshold, currentCount)
         : '',
     }
-  }, [conditionType, dailyRequiredCount, embedDescription, embedTitle, messageContent, requiredDays])
+  }, [
+    conditionType,
+    dailyRequiredCount,
+    embedDescription,
+    embedTitle,
+    messageContent,
+    requiredDays,
+  ])
   const formSummary = useMemo(() => {
     const count = dailyRequiredCount.trim() || 'N'
     if (conditionType === 'consecutive_posts') {
