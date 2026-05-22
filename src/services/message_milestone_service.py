@@ -84,6 +84,7 @@ class MilestoneProgressResult:
     reward_pending: bool = False
     consecutive_count: int = 0
     notification_limited: bool = False
+    reset_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -321,6 +322,7 @@ async def record_message_and_get_reward(
 
     today = message_milestone_date(created_at)
     yesterday = today - timedelta(days=1)
+    reset_reason = None
 
     progress = await _get_or_create_message_milestone_progress(
         session, config_id=config.id, user_id=user_id, counted_date=today
@@ -329,10 +331,22 @@ async def record_message_and_get_reward(
     if progress.last_counted_date == today:
         previous_count = progress.daily_count
     else:
+        previous_date = progress.last_counted_date
+        previous_daily_count = progress.daily_count
         continues = (
-            progress.last_counted_date == yesterday
-            and progress.daily_count >= config.daily_required_count
+            previous_date == yesterday
+            and previous_daily_count >= config.daily_required_count
         )
+        if not continues:
+            if previous_date is None:
+                reset_reason = "no_previous_date"
+            elif previous_date != yesterday:
+                reset_reason = f"date_gap:{previous_date}->{today}"
+            else:
+                reset_reason = (
+                    "previous_daily_count_below_goal:"
+                    f"{previous_daily_count}/{config.daily_required_count}"
+                )
         progress.streak_days = progress.streak_days if continues else 0
         progress.reward_pending = False
         progress.reward_sent = False
@@ -360,6 +374,7 @@ async def record_message_and_get_reward(
         daily_count=progress.daily_count,
         crossed_daily_goal=crossed_daily_goal,
         reward_pending=progress.reward_pending,
+        reset_reason=reset_reason,
     )
 
 

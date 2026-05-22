@@ -38,6 +38,13 @@ _CONSECUTIVE_NOTIFICATION_LIMITS = {
     CONSECUTIVE_NOTIFY_EVERY_TIME,
     CONSECUTIVE_NOTIFY_PER_USER_PER_DAY,
 }
+_PROGRESS_RESET_FIELDS = frozenset(
+    {
+        "condition_type",
+        "daily_required_count",
+        "pattern",
+    }
+)
 
 
 def _positive_count(value: int | None) -> int:
@@ -68,6 +75,14 @@ def _serialize(config: MessageMilestoneConfig) -> dict[str, Any]:
         "delete_after_seconds": config.delete_after_seconds,
         "enabled": config.enabled,
     }
+
+
+def _should_reset_progress(
+    config: MessageMilestoneConfig, values: dict[str, Any]
+) -> bool:
+    return any(
+        getattr(config, field) != values.get(field) for field in _PROGRESS_RESET_FIELDS
+    )
 
 
 class _MessageMilestoneRequest(BaseModel):
@@ -306,12 +321,20 @@ async def api_message_milestone_update(
         )
         return JSONResponse({"detail": error}, status_code=422)
 
-    await delete_message_milestone_state(db, config_id=config_id)
-    logger.info(
-        "MessageMilestone API: reset progress/processed state for config=%s "
-        "before update",
-        config_id,
-    )
+    should_reset_progress = _should_reset_progress(config, values)
+    if should_reset_progress:
+        await delete_message_milestone_state(db, config_id=config_id)
+        logger.info(
+            "MessageMilestone API: reset progress/processed state for config=%s "
+            "before update because tracking criteria changed",
+            config_id,
+        )
+    else:
+        logger.info(
+            "MessageMilestone API: kept progress/processed state for config=%s "
+            "because update only changed notification content/settings",
+            config_id,
+        )
     for key, value in values.items():
         setattr(config, key, value)
     await db.commit()

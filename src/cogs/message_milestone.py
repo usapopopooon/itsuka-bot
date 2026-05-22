@@ -240,7 +240,8 @@ class MessageMilestoneCog(commands.Cog):
                     "MessageMilestone: progress config=%s user=%s message=%s "
                     "condition=%s daily=%s/%s streak=%s/%s consecutive=%s/%s "
                     "crossed_daily_goal=%s "
-                    "reward_pending=%s duplicate=%s limited=%s should_send=%s",
+                    "reward_pending=%s duplicate=%s limited=%s reset_reason=%s "
+                    "should_send=%s",
                     config.id,
                     message.author.id,
                     message.id,
@@ -255,6 +256,7 @@ class MessageMilestoneCog(commands.Cog):
                     result.reward_pending,
                     result.duplicate,
                     result.notification_limited,
+                    result.reset_reason,
                     result.should_send,
                 )
                 if result.duplicate:
