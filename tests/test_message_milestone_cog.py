@@ -22,6 +22,7 @@ def _config() -> ChannelMessageMilestone:
         embed_description="{count} posts",
         embed_color=None,
         delete_after_seconds=None,
+        backfill_completed=False,
         consecutive_notification_limit="none",
         consecutive_notification_daily_limit=1,
     )

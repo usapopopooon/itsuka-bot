@@ -15,8 +15,10 @@ from src.database.models import (
     MessageMilestoneProgress,
 )
 from src.services.message_milestone_service import (
+    BackfillMessage,
     ChannelMessageMilestone,
     MilestoneTemplateContext,
+    backfill_message_milestone_messages,
     delete_message_milestone_state,
     mark_message_milestone_consecutive_reward_sent,
     mark_message_milestone_reward_sent,
@@ -42,6 +44,7 @@ def _config(*, daily: int = 2, days: int = 2) -> ChannelMessageMilestone:
         embed_description=None,
         embed_color=None,
         delete_after_seconds=None,
+        backfill_completed=False,
         consecutive_notification_limit="none",
         consecutive_notification_daily_limit=1,
     )
@@ -176,6 +179,98 @@ async def test_delete_message_milestone_state_removes_progress_and_processed(
 
     assert progress.scalars().all() == []
     assert processed.scalars().all() == []
+
+
+async def test_backfill_initializes_daily_streak_without_pending_reward(
+    session_factory,
+) -> None:
+    config = _config(daily=2, days=7)
+    day1 = datetime(2026, 5, 18, 1, tzinfo=UTC)
+    day2 = datetime(2026, 5, 19, 1, tzinfo=UTC)
+
+    async with session_factory() as session:
+        session.add(
+            MessageMilestoneConfig(
+                id=config.id,
+                guild_id="g1",
+                channel_id=config.channel_id,
+                condition_type=config.condition_type,
+                daily_required_count=config.daily_required_count,
+                required_days=config.required_days,
+                response_type="plain",
+                message_content="done",
+            )
+        )
+        await session.commit()
+
+        counted = await backfill_message_milestone_messages(
+            session,
+            config=config,
+            messages=[
+                BackfillMessage("u1", "m1", "done", day1),
+                BackfillMessage("u1", "m2", "done", day1),
+                BackfillMessage("u1", "m3", "done", day2),
+            ],
+        )
+        live = await record_message_and_get_reward(
+            session, config=config, user_id="u1", created_at=day2, message_id="m4"
+        )
+
+        progress = (
+            await session.execute(
+                select(MessageMilestoneProgress).where(
+                    MessageMilestoneProgress.config_id == config.id,
+                    MessageMilestoneProgress.user_id == "u1",
+                )
+            )
+        ).scalar_one()
+        db_config = (
+            await session.execute(
+                select(MessageMilestoneConfig).where(
+                    MessageMilestoneConfig.id == config.id
+                )
+            )
+        ).scalar_one()
+
+    assert counted == 3
+    assert live.should_send
+    assert live.streak_days == 2
+    assert progress.reward_pending
+    assert not progress.reward_sent
+    assert db_config.backfill_completed
+
+
+async def test_backfill_preserves_yesterday_streak_for_today(session_factory) -> None:
+    config = _config(daily=1, days=7)
+    yesterday = datetime(2026, 5, 18, 1, tzinfo=UTC)
+    today = datetime(2026, 5, 19, 1, tzinfo=UTC)
+
+    async with session_factory() as session:
+        session.add(
+            MessageMilestoneConfig(
+                id=config.id,
+                guild_id="g1",
+                channel_id=config.channel_id,
+                condition_type=config.condition_type,
+                daily_required_count=config.daily_required_count,
+                required_days=config.required_days,
+                response_type="plain",
+                message_content="done",
+            )
+        )
+        await session.commit()
+
+        await backfill_message_milestone_messages(
+            session,
+            config=config,
+            messages=[BackfillMessage("u1", "m1", "done", yesterday)],
+        )
+        live = await record_message_and_get_reward(
+            session, config=config, user_id="u1", created_at=today, message_id="m2"
+        )
+
+    assert live.should_send
+    assert live.streak_days == 2
 
 
 async def test_record_consecutive_message_sends_after_same_user_reaches_goal(
@@ -392,3 +487,25 @@ def test_render_milestone_template_replaces_known_variables() -> None:
         == "Itsuka: 7/7/9/9 {unknown}"
     )
     assert render_milestone_template(None, context) is None
+
+
+def test_render_milestone_template_uses_initial_streak_label() -> None:
+    first = MilestoneTemplateContext(
+        username="Itsuka", daily_required_count=7, current_count=1
+    )
+    second = MilestoneTemplateContext(
+        username="Itsuka", daily_required_count=7, current_count=2
+    )
+
+    assert (
+        render_milestone_template("{username} さん、{streak_label}！", first)
+        == "Itsuka さん、初日達成！"
+    )
+    assert (
+        render_milestone_template("{username} さん、{current_count}日コンボ！", first)
+        == "Itsuka さん、初日達成！"
+    )
+    assert (
+        render_milestone_template("{username} さん、{streak_label}！", second)
+        == "Itsuka さん、2日コンボ！"
+    )

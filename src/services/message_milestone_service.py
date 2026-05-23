@@ -26,7 +26,9 @@ __all__ = [
     "CONDITION_CONSECUTIVE_POSTS",
     "CONSECUTIVE_NOTIFY_EVERY_TIME",
     "CONSECUTIVE_NOTIFY_PER_USER_PER_DAY",
+    "BackfillMessage",
     "ChannelMessageMilestone",
+    "backfill_message_milestone_messages",
     "compile_pattern",
     "delete_message_milestone_state",
     "MilestoneProgressResult",
@@ -70,8 +72,17 @@ class ChannelMessageMilestone:
     embed_description: str | None
     embed_color: int | None
     delete_after_seconds: int | None
+    backfill_completed: bool
     consecutive_notification_limit: str
     consecutive_notification_daily_limit: int
+
+
+@dataclass(frozen=True)
+class BackfillMessage:
+    user_id: str
+    message_id: str
+    content: str
+    created_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -110,6 +121,11 @@ _TEMPLATE_VARIABLES: dict[str, _TemplateValueFactory] = {
         if context.current_count is not None
         else context.daily_required_count
     ),
+    "streak_label": lambda context: (
+        "初日達成"
+        if (context.current_count or 1) <= 1
+        else f"{context.current_count}日コンボ"
+    ),
 }
 
 
@@ -124,6 +140,9 @@ def render_milestone_template(
     if template is None:
         return None
     rendered = template
+    if context.current_count is not None and context.current_count <= 1:
+        rendered = rendered.replace("{current_count}日コンボ", "初日達成")
+        rendered = rendered.replace("{current}日コンボ", "初日達成")
     for name, factory in _TEMPLATE_VARIABLES.items():
         rendered = rendered.replace(f"{{{name}}}", factory(context))
     return rendered
@@ -235,6 +254,7 @@ async def get_enabled_message_milestones(
                 embed_description=config.embed_description,
                 embed_color=config.embed_color,
                 delete_after_seconds=config.delete_after_seconds,
+                backfill_completed=bool(config.backfill_completed),
                 consecutive_notification_limit=config.consecutive_notification_limit
                 or CONSECUTIVE_NOTIFY_EVERY_TIME,
                 consecutive_notification_daily_limit=_normalize_positive_count(
@@ -399,10 +419,10 @@ async def record_consecutive_message_and_get_reward(
                 duplicate=True,
             )
 
-    result = await session.execute(
+    config_result = await session.execute(
         select(MessageMilestoneConfig).where(MessageMilestoneConfig.id == config.id)
     )
-    db_config = result.scalar_one_or_none()
+    db_config = config_result.scalar_one_or_none()
     if db_config is None:
         await session.commit()
         return MilestoneProgressResult(
@@ -445,6 +465,57 @@ async def record_consecutive_message_and_get_reward(
         consecutive_count=db_config.consecutive_count,
         notification_limited=notification_limited,
     )
+
+
+async def backfill_message_milestone_messages(
+    session: AsyncSession,
+    *,
+    config: ChannelMessageMilestone,
+    messages: list[BackfillMessage],
+) -> int:
+    """過去ログを通知せずにカウント状態へ反映する。"""
+    counted = 0
+    for message in messages:
+        if config.pattern is not None and not config.pattern.search(message.content):
+            continue
+        if config.condition_type == CONDITION_CONSECUTIVE_POSTS:
+            result = await record_consecutive_message_and_get_reward(
+                session,
+                config=config,
+                user_id=message.user_id,
+                created_at=message.created_at,
+                message_id=message.message_id,
+            )
+            if result.should_send:
+                await mark_message_milestone_consecutive_reward_sent(
+                    session,
+                    config_id=config.id,
+                    user_id=message.user_id,
+                    created_at=message.created_at,
+                )
+        else:
+            result = await record_message_and_get_reward(
+                session,
+                config=config,
+                user_id=message.user_id,
+                created_at=message.created_at,
+                message_id=message.message_id,
+            )
+            if result.should_send:
+                await mark_message_milestone_reward_sent(
+                    session, config_id=config.id, user_id=message.user_id
+                )
+        if not result.duplicate:
+            counted += 1
+
+    config_result = await session.execute(
+        select(MessageMilestoneConfig).where(MessageMilestoneConfig.id == config.id)
+    )
+    db_config = config_result.scalar_one_or_none()
+    if db_config is not None:
+        db_config.backfill_completed = True
+    await session.commit()
+    return counted
 
 
 async def delete_message_milestone_state(

@@ -15,8 +15,10 @@ from src.services.message_milestone_service import (
     CONDITION_CONSECUTIVE_POSTS,
     MAX_MILESTONE_MESSAGE_LENGTH,
     MAX_MILESTONE_TEXT_LENGTH,
+    BackfillMessage,
     ChannelMessageMilestone,
     MilestoneTemplateContext,
+    backfill_message_milestone_messages,
     get_enabled_message_milestones,
     mark_message_milestone_consecutive_reward_sent,
     mark_message_milestone_reward_sent,
@@ -33,6 +35,7 @@ _TRACKABLE_MESSAGE_TYPES: frozenset[discord.MessageType] = frozenset(
 _EMBED_TITLE_LIMIT = 256
 _CONFIG_MAX_AGE_SECONDS = 2.0
 _CONTENT_PREVIEW_LIMIT = 80
+_BACKFILL_HISTORY_LIMIT = 1000
 
 
 @dataclass(frozen=True)
@@ -64,6 +67,8 @@ class MessageMilestoneCog(commands.Cog):
 
     async def cog_load(self) -> None:
         await self.refresh()
+        await self._backfill_pending_configs()
+        await self.refresh()
         self._refresh_configs.start()
         logger.info("MessageMilestone cog loaded, refresh loop started")
 
@@ -88,6 +93,82 @@ class MessageMilestoneCog(commands.Cog):
                 channel_id,
                 [config.id for config in records],
             )
+
+    async def _backfill_pending_configs(self) -> None:
+        if self._configs is None:
+            return
+
+        pending = [
+            config
+            for records in self._configs.values()
+            for config in records
+            if not config.backfill_completed
+        ]
+        if not pending:
+            return
+
+        logger.info(
+            "MessageMilestone: starting history backfill for config ids=%s",
+            [config.id for config in pending],
+        )
+        for config in pending:
+            await self._backfill_config_history(config)
+
+    async def _backfill_config_history(self, config: ChannelMessageMilestone) -> None:
+        channel = self.bot.get_channel(int(config.channel_id))
+        if channel is None or not hasattr(channel, "history"):
+            logger.info(
+                "MessageMilestone: skipped backfill for config=%s channel=%s "
+                "because history is unavailable",
+                config.id,
+                config.channel_id,
+            )
+            return
+
+        history: list[BackfillMessage] = []
+        try:
+            async for message in channel.history(limit=_BACKFILL_HISTORY_LIMIT):
+                if not self._message_is_backfillable(message):
+                    continue
+                history.append(
+                    BackfillMessage(
+                        user_id=str(message.author.id),
+                        message_id=str(message.id),
+                        content=message.content,
+                        created_at=message.created_at,
+                    )
+                )
+        except discord.HTTPException:
+            logger.exception(
+                "MessageMilestone: failed to read history for backfill config=%s "
+                "channel=%s",
+                config.id,
+                config.channel_id,
+            )
+            return
+
+        history.reverse()
+        async with self._progress_lock, async_session() as session:
+            counted = await backfill_message_milestone_messages(
+                session, config=config, messages=history
+            )
+        logger.info(
+            "MessageMilestone: completed history backfill config=%s channel=%s "
+            "scanned=%s counted=%s",
+            config.id,
+            config.channel_id,
+            len(history),
+            counted,
+        )
+
+    def _message_is_backfillable(self, message: discord.Message) -> bool:
+        if not message.guild or not message.author:
+            return False
+        if message.author.bot:
+            return False
+        if message.webhook_id is not None:
+            return False
+        return message.type in _TRACKABLE_MESSAGE_TYPES
 
     async def _ensure_recent_configs(self) -> None:
         if (

@@ -30,7 +30,7 @@ const CONDITION_LABELS: Record<ConditionType, string> = {
 
 const DEFAULT_PLAIN_MESSAGES: Record<ConditionType, string> = {
   consecutive_posts: '{username} さん、連続 {current_count} 回目です！',
-  daily_streak: '{username} さん、{current_count}日コンボ！ 1日 {n} 回達成です！',
+  daily_streak: '{username} さん、{streak_label}！ 1日 {n} 回達成です！',
 }
 
 const DEFAULT_EMBED_TITLES: Record<ConditionType, string> = {
@@ -65,12 +65,19 @@ function conditionTypeLabel(conditionType: ConditionType) {
 }
 
 function renderTemplate(template: string, n: string, currentCount: string) {
+  const streakLabel =
+    Number.isFinite(Number(currentCount)) && Number(currentCount) <= 1
+      ? '初日達成'
+      : `${currentCount}日コンボ`
   return template
+    .replaceAll('{current_count}日コンボ', streakLabel)
+    .replaceAll('{current}日コンボ', streakLabel)
     .replaceAll('{username}', 'いつか')
     .replaceAll('{n}', n)
     .replaceAll('{count}', n)
     .replaceAll('{current_count}', currentCount)
     .replaceAll('{current}', currentCount)
+    .replaceAll('{streak_label}', streakLabel)
 }
 
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
@@ -672,7 +679,9 @@ export default function MessageMilestonePage() {
                 <p className="mt-1 text-xs text-muted-foreground">
                   テンプレート変数: <code>{'{username}'}</code> はユーザー名、
                   <code>{'{n}'}</code> は設定した投稿数、
-                  <code>{'{current_count}'}</code> は現在の連続回数/コンボ日数です。
+                  <code>{'{current_count}'}</code> は現在の連続回数/コンボ日数、
+                  <code>{'{streak_label}'}</code> は初日は「初日達成」、
+                  2日目以降は「N日コンボ」です。
                 </p>
               </div>
 
