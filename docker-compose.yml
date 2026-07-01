@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: user
@@ -9,7 +9,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata18:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d itsuka_bot"]
       interval: 5s
@@ -69,4 +69,4 @@ services:
       - ./frontend/next.config.ts:/app/next.config.ts
 
 volumes:
-  pgdata:
+  pgdata18:
