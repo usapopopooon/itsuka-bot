@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     mem_limit: ${DB_MEMORY_LIMIT:-256m}
     cpus: "${DB_CPUS:-0.50}"
-    shm_size: ${DB_SHM_SIZE:-128mb}
+    shm_size: ${DB_SHM_SIZE:-64mb}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-itsuka_bot}
       POSTGRES_USER: ${POSTGRES_USER:-itsuka}
@@ -15,7 +15,7 @@ services:
       - -c
       - max_connections=${POSTGRES_MAX_CONNECTIONS:-30}
       - -c
-      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-32MB}
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-64MB}
     volumes:
       - postgres-data-18:/var/lib/postgresql
     healthcheck:
