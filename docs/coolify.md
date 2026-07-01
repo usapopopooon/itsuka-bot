@@ -34,8 +34,8 @@ ADMIN_USER=admin
 ADMIN_PASSWORD=itsuka-admin-password
 SESSION_SECRET_KEY=itsuka-session-secret-change-me-before-production
 SERVICE_PASSWORD_POSTGRES=itsuka-postgres-password
-SERVICE_URL_FRONTEND_3000=https://itsuka.usapo.space
-CORS_ORIGINS=https://itsuka.usapo.space
+SERVICE_URL_FRONTEND_3000=https://itsuka-bot.usapo.space
+CORS_ORIGINS=https://itsuka-bot.usapo.space
 SECURE_COOKIE=true
 LOG_LEVEL=INFO
 ```
@@ -57,11 +57,11 @@ For the current home server / KAGOYA relay layout, point the app domain at the
 same public endpoints as Coolify:
 
 ```text
-itsuka.usapo.space A    133.18.125.123
-itsuka.usapo.space AAAA 240b:10:dfc9:fa00:31fe:6ebe:a028:f37a
+itsuka-bot.usapo.space A    133.18.125.123
+itsuka-bot.usapo.space AAAA 240b:10:dfc9:fa00:31fe:6ebe:a028:f37a
 ```
 
-Then assign `https://itsuka.usapo.space` to the `frontend` service in Coolify.
+Then assign `https://itsuka-bot.usapo.space` to the `frontend` service in Coolify.
 
 ## Railway Database Migration
 
