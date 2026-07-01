@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-itsuka_bot}
       POSTGRES_USER: ${POSTGRES_USER:-itsuka}
-      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES:-change-me}
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES:-itsuka-postgres-password}
       POSTGRES_INITDB_ARGS: ${POSTGRES_INITDB_ARGS:---encoding=UTF8 --locale=C}
     command:
       - postgres
@@ -40,7 +40,7 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-itsuka}:${SERVICE_PASSWORD_POSTGRES:-change-me}@db:5432/${POSTGRES_DB:-itsuka_bot}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-itsuka}:${SERVICE_PASSWORD_POSTGRES:-itsuka-postgres-password}@db:5432/${POSTGRES_DB:-itsuka_bot}
       DISCORD_TOKEN: ${DISCORD_TOKEN:?set DISCORD_TOKEN}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     command: python -m src.main
@@ -54,7 +54,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-itsuka}:${SERVICE_PASSWORD_POSTGRES:-change-me}@db:5432/${POSTGRES_DB:-itsuka_bot}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-itsuka}:${SERVICE_PASSWORD_POSTGRES:-itsuka-postgres-password}@db:5432/${POSTGRES_DB:-itsuka_bot}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     command: python -m src.database.migrate
 
@@ -69,12 +69,12 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-itsuka}:${SERVICE_PASSWORD_POSTGRES:-change-me}@db:5432/${POSTGRES_DB:-itsuka_bot}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-itsuka}:${SERVICE_PASSWORD_POSTGRES:-itsuka-postgres-password}@db:5432/${POSTGRES_DB:-itsuka_bot}
       ADMIN_USER: ${ADMIN_USER:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
-      SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:?set SESSION_SECRET_KEY}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-itsuka-admin-password}
+      SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:-itsuka-session-secret-change-me-before-production}
       SECURE_COOKIE: ${SECURE_COOKIE:-true}
-      CORS_ORIGINS: ${CORS_ORIGINS:-${SERVICE_URL_FRONTEND_3000:-http://localhost:3000}}
+      CORS_ORIGINS: ${CORS_ORIGINS:-${SERVICE_URL_FRONTEND_3000:-https://itsuka.usapo.space}}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     command: uvicorn src.web.app:app --host 0.0.0.0 --port 8000
     expose:
@@ -100,7 +100,7 @@ services:
     environment:
       API_URL: http://api:8000
       NODE_ENV: production
-      SERVICE_URL_FRONTEND_3000: ${SERVICE_URL_FRONTEND_3000:-}
+      SERVICE_URL_FRONTEND_3000: ${SERVICE_URL_FRONTEND_3000:-https://itsuka.usapo.space}
     expose:
       - "3000"
 
