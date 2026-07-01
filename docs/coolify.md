@@ -47,6 +47,11 @@ LOG_LEVEL=INFO
 different public URL, set both `SERVICE_URL_FRONTEND_3000` and `CORS_ORIGINS` to
 that URL.
 
+The default PostgreSQL tuning keeps `shared_buffers=32MB` and
+`shm_size=128mb`. Keep `shm_size` comfortably larger than `shared_buffers`; if
+PostgreSQL becomes unhealthy immediately after startup, check the DB container
+logs before increasing `shared_buffers`.
+
 ## DNS
 
 For the current home server / KAGOYA relay layout, point the app domain at the
