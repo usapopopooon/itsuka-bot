@@ -17,6 +17,10 @@ data/
 *.sqlite
 *.sqlite3
 
+# Test artifacts
+.coverage
+coverage.xml
+
 # IDE
 .vscode/
 .idea/
