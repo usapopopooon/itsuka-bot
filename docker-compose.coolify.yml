@@ -17,7 +17,7 @@ services:
       - -c
       - shared_buffers=${POSTGRES_SHARED_BUFFERS:-32MB}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data-18:/var/lib/postgresql
     healthcheck:
       test:
         [
@@ -105,4 +105,4 @@ services:
       - "3000"
 
 volumes:
-  postgres-data:
+  postgres-data-18:

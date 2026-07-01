@@ -47,10 +47,14 @@ LOG_LEVEL=INFO
 different public URL, set both `SERVICE_URL_FRONTEND_3000` and `CORS_ORIGINS` to
 that URL.
 
-The default PostgreSQL tuning keeps `shared_buffers=32MB` and
-`shm_size=128mb`. Keep `shm_size` comfortably larger than `shared_buffers`; if
-PostgreSQL becomes unhealthy immediately after startup, check the DB container
-logs before increasing `shared_buffers`.
+PostgreSQL 18 Docker images store data under a major-version-specific directory
+below `/var/lib/postgresql`, so the Compose file mounts `postgres-data-18` at
+`/var/lib/postgresql`. Do not change it back to `/var/lib/postgresql/data`.
+
+The default PostgreSQL tuning keeps `shared_buffers=32MB` and `shm_size=128mb`.
+Keep `shm_size` comfortably larger than `shared_buffers`; if PostgreSQL becomes
+unhealthy immediately after startup, check the DB container logs before
+increasing `shared_buffers`.
 
 ## DNS
 
