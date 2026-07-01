@@ -2,7 +2,7 @@
 
 This app is deployed as one Docker Compose application:
 
-- `db`: PostgreSQL
+- `db`: PostgreSQL 18, matching the Railway dump source version
 - `migrate`: one-shot database initialization / lightweight migration
 - `bot`: Discord worker
 - `api`: FastAPI admin API, internal only
