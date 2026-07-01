@@ -74,7 +74,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-itsuka-admin-password}
       SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:-itsuka-session-secret-change-me-before-production}
       SECURE_COOKIE: ${SECURE_COOKIE:-true}
-      CORS_ORIGINS: ${CORS_ORIGINS:-${SERVICE_URL_FRONTEND_3000:-https://itsuka-bot.usapo.space}}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     command: uvicorn src.web.app:app --host 0.0.0.0 --port 8000
     expose:
@@ -100,7 +100,7 @@ services:
     environment:
       API_URL: http://api:8000
       NODE_ENV: production
-      SERVICE_URL_FRONTEND_3000: ${SERVICE_URL_FRONTEND_3000:-https://itsuka-bot.usapo.space}
+      SERVICE_URL_FRONTEND_3000: ${SERVICE_URL_FRONTEND_3000:-}
     expose:
       - "3000"
 
