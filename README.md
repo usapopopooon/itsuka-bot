@@ -184,6 +184,14 @@ Railway 上では **3 サービス + Postgres アドオン** を立てる。bot 
   リポジトリルートの Python Dockerfile を拾ってビルドが通ったように見えて
   起動時に死ぬので注意。
 
+## デプロイ (Coolify)
+
+Coolify では `docker-compose.coolify.yml` を使う Docker Compose Application
+としてデプロイする。`db` / `bot` / `api` / `frontend` を 1 つの stack に
+まとめ、外部公開は `frontend:3000` のみ行う。
+
+手順と必要な環境変数は [docs/coolify.md](docs/coolify.md) を参照。
+
 ## Discord Developer Portal
 
 - **Privileged Gateway Intents**:
