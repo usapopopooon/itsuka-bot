@@ -206,7 +206,7 @@ Coolify では `docker-compose.coolify.yml` を使う Docker Compose Application
 
 | Command | 概要 |
 | --- | --- |
-| `/auto-reaction-exclude config_id user_ids` | 指定した Auto Reaction 設定の除外ユーザーIDを更新。`user_ids` は空白/カンマ区切り、省略で解除 |
+| `/auto-reaction-exclude config_id user` | 指定した Auto Reaction 設定に除外ユーザーを追加。`user` はサーバーメンバーを表示名で検索して選択。`clear: true` で全解除 |
 
 ## 環境変数
 

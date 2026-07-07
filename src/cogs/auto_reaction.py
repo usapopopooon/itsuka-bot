@@ -35,9 +35,9 @@ from src.database.engine import async_session
 from src.database.models import AutoReactionConfig
 from src.services.auto_reaction_service import (
     ChannelAutoReaction,
+    decode_auto_reaction_user_ids,
     encode_auto_reaction_user_ids,
     get_enabled_auto_reactions,
-    normalize_auto_reaction_user_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,10 +56,6 @@ _REACTABLE_MESSAGE_TYPES: frozenset[discord.MessageType] = frozenset(
 # 1 チャンネルあたり何件遡って再点検するか。多すぎても直近以外は実用上付ける
 # 必要が無く、API コストが増えるだけなので 50 件に制限する。
 _SWEEP_HISTORY_LIMIT = 50
-
-
-def _format_user_ids(user_ids: list[str]) -> str:
-    return ", ".join(user_ids) if user_ids else "(なし)"
 
 
 def _interaction_is_admin(interaction: discord.Interaction) -> bool:
@@ -127,21 +123,23 @@ class AutoReactionCog(commands.Cog):
 
     @app_commands.command(
         name="auto-reaction-exclude",
-        description="Auto Reaction の除外ユーザーIDを設定します",
+        description="Auto Reaction の除外ユーザーを設定します",
     )
     @app_commands.default_permissions(administrator=True)
     @app_commands.guild_only()
     @app_commands.describe(
         config_id="管理画面に表示される設定ID",
-        user_ids="除外するDiscordユーザーID。空白/カンマ区切り、省略で解除",
+        user="除外するサーバーメンバー。表示名で検索できます",
+        clear="true にすると除外ユーザーを全解除します",
     )
     async def auto_reaction_exclude(
         self,
         interaction: discord.Interaction,
         config_id: int,
-        user_ids: str | None = None,
+        user: discord.Member | None = None,
+        clear: bool = False,
     ) -> None:
-        """Slash command から除外ユーザー ID を設定する。"""
+        """Slash command から除外ユーザーを設定する。"""
         if interaction.guild_id is None:
             await interaction.response.send_message(
                 "このコマンドはサーバー内でのみ実行できます。",
@@ -161,17 +159,21 @@ class AutoReactionCog(commands.Cog):
             )
             return
 
-        try:
-            excluded_user_ids = normalize_auto_reaction_user_ids(
-                [user_ids] if user_ids else []
-            )
-        except ValueError as e:
+        if clear and user is not None:
             await interaction.response.send_message(
-                f"除外ユーザーIDが不正です: {e}",
+                "ユーザーを追加するか、全解除するかのどちらか一方だけ指定してください。",
+                ephemeral=True,
+            )
+            return
+        if not clear and user is None:
+            await interaction.response.send_message(
+                "除外するユーザーを選択するか、clear を true にしてください。",
                 ephemeral=True,
             )
             return
 
+        message: str
+        changed = False
         async with async_session() as session:
             result = await session.execute(
                 select(AutoReactionConfig).where(AutoReactionConfig.id == config_id)
@@ -183,17 +185,36 @@ class AutoReactionCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
-            config.excluded_user_ids = encode_auto_reaction_user_ids(excluded_user_ids)
-            await session.commit()
+            excluded_user_ids = decode_auto_reaction_user_ids(config.excluded_user_ids)
+            if clear:
+                if excluded_user_ids:
+                    config.excluded_user_ids = encode_auto_reaction_user_ids([])
+                    await session.commit()
+                    changed = True
+                message = f"設定ID {config_id} の除外ユーザーを全解除しました。"
+            else:
+                assert user is not None
+                user_id = str(user.id)
+                if user_id in excluded_user_ids:
+                    message = (
+                        f"{user.mention} はすでに設定ID {config_id} "
+                        "の除外ユーザーです。"
+                    )
+                else:
+                    excluded_user_ids.append(user_id)
+                    config.excluded_user_ids = encode_auto_reaction_user_ids(
+                        excluded_user_ids
+                    )
+                    await session.commit()
+                    changed = True
+                    message = (
+                        f"{user.mention} を設定ID {config_id} "
+                        "の除外ユーザーに追加しました。"
+                    )
 
-        await self.refresh()
-        await interaction.response.send_message(
-            (
-                f"設定ID {config_id} の除外ユーザーIDを更新しました: "
-                f"{_format_user_ids(excluded_user_ids)}"
-            ),
-            ephemeral=True,
-        )
+        if changed:
+            await self.refresh()
+        await interaction.response.send_message(message, ephemeral=True)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
