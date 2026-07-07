@@ -33,9 +33,11 @@ def test_decode_filters_non_strings() -> None:
 
 
 def test_normalize_user_ids_splits_mentions_and_deduplicates() -> None:
-    assert normalize_auto_reaction_user_ids(
-        [" 123, <@456>\n<@!789> 123 "]
-    ) == ["123", "456", "789"]
+    assert normalize_auto_reaction_user_ids([" 123, <@456>\n<@!789> 123 "]) == [
+        "123",
+        "456",
+        "789",
+    ]
 
 
 def test_normalize_user_ids_rejects_invalid_tokens() -> None:

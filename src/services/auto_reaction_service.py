@@ -88,8 +88,7 @@ def normalize_auto_reaction_user_ids(user_ids: list[str]) -> list[str]:
             seen.add(token)
             if len(normalized) > MAX_AUTO_REACTION_EXCLUDED_USERS:
                 raise ValueError(
-                    "too many excluded users "
-                    f"(max {MAX_AUTO_REACTION_EXCLUDED_USERS})"
+                    f"too many excluded users (max {MAX_AUTO_REACTION_EXCLUDED_USERS})"
                 )
     return normalized
 

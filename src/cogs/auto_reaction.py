@@ -183,9 +183,7 @@ class AutoReactionCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
-            config.excluded_user_ids = encode_auto_reaction_user_ids(
-                excluded_user_ids
-            )
+            config.excluded_user_ids = encode_auto_reaction_user_ids(excluded_user_ids)
             await session.commit()
 
         await self.refresh()
