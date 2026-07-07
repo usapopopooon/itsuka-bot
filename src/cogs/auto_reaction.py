@@ -128,14 +128,12 @@ class AutoReactionCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @app_commands.guild_only()
     @app_commands.describe(
-        config_id="管理画面に表示される設定ID",
         user="除外するサーバーメンバー。表示名で検索できます",
-        clear="true にすると除外ユーザーを全解除します",
+        clear="true にするとこのサーバーの除外ユーザーを全解除します",
     )
     async def auto_reaction_exclude(
         self,
         interaction: discord.Interaction,
-        config_id: int,
         user: discord.Member | None = None,
         clear: bool = False,
     ) -> None:
@@ -149,12 +147,6 @@ class AutoReactionCog(commands.Cog):
         if not _interaction_is_admin(interaction):
             await interaction.response.send_message(
                 "このコマンドは管理者のみ実行できます。",
-                ephemeral=True,
-            )
-            return
-        if config_id <= 0:
-            await interaction.response.send_message(
-                "設定IDは1以上の数値で指定してください。",
                 ephemeral=True,
             )
             return
@@ -176,40 +168,63 @@ class AutoReactionCog(commands.Cog):
         changed = False
         async with async_session() as session:
             result = await session.execute(
-                select(AutoReactionConfig).where(AutoReactionConfig.id == config_id)
+                select(AutoReactionConfig).where(
+                    AutoReactionConfig.guild_id == str(interaction.guild_id)
+                )
             )
-            config = result.scalar_one_or_none()
-            if config is None or config.guild_id != str(interaction.guild_id):
+            configs = list(result.scalars().all())
+            if not configs:
                 await interaction.response.send_message(
-                    "指定された設定IDがこのサーバーに見つかりません。",
+                    "このサーバーには Auto Reaction 設定がありません。",
                     ephemeral=True,
                 )
                 return
-            excluded_user_ids = decode_auto_reaction_user_ids(config.excluded_user_ids)
+
             if clear:
-                if excluded_user_ids:
+                changed_count = 0
+                for config in configs:
+                    excluded_user_ids = decode_auto_reaction_user_ids(
+                        config.excluded_user_ids
+                    )
+                    if not excluded_user_ids:
+                        continue
                     config.excluded_user_ids = encode_auto_reaction_user_ids([])
-                    await session.commit()
                     changed = True
-                message = f"設定ID {config_id} の除外ユーザーを全解除しました。"
+                    changed_count += 1
+                if changed:
+                    await session.commit()
+                message = (
+                    "このサーバーの Auto Reaction 除外ユーザーを全解除しました。"
+                    if changed_count
+                    else "このサーバーに除外ユーザーは設定されていません。"
+                )
             else:
                 assert user is not None
                 user_id = str(user.id)
-                if user_id in excluded_user_ids:
-                    message = (
-                        f"{user.mention} はすでに設定ID {config_id} "
-                        "の除外ユーザーです。"
+                changed_count = 0
+                for config in configs:
+                    excluded_user_ids = decode_auto_reaction_user_ids(
+                        config.excluded_user_ids
                     )
-                else:
+                    if user_id in excluded_user_ids:
+                        continue
                     excluded_user_ids.append(user_id)
                     config.excluded_user_ids = encode_auto_reaction_user_ids(
                         excluded_user_ids
                     )
-                    await session.commit()
                     changed = True
+                    changed_count += 1
+                if changed:
+                    await session.commit()
+                if changed_count == 0:
                     message = (
-                        f"{user.mention} を設定ID {config_id} "
-                        "の除外ユーザーに追加しました。"
+                        f"{user.mention} はすでにこのサーバーの "
+                        "Auto Reaction 除外ユーザーです。"
+                    )
+                else:
+                    message = (
+                        f"{user.mention} をこのサーバーの Auto Reaction "
+                        f"除外ユーザーに追加しました。対象設定: {changed_count}件"
                     )
 
         if changed:

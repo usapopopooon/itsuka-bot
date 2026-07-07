@@ -96,7 +96,7 @@ async def test_exclude_command_rejects_non_admin() -> None:
     interaction = _interaction(administrator=False)
 
     await AutoReactionCog.auto_reaction_exclude.callback(
-        cog, interaction, config_id=1, user=_member(), clear=False
+        cog, interaction, user=_member(), clear=False
     )
 
     interaction.response.send_message.assert_called_once_with(
@@ -106,16 +106,23 @@ async def test_exclude_command_rejects_non_admin() -> None:
 
 
 async def test_exclude_command_adds_selected_member(monkeypatch) -> None:
-    class _FakeResult:
-        def __init__(self, config: AutoReactionConfig) -> None:
-            self.config = config
+    class _FakeScalars:
+        def __init__(self, configs: list[AutoReactionConfig]) -> None:
+            self.configs = configs
 
-        def scalar_one_or_none(self) -> AutoReactionConfig:
-            return self.config
+        def all(self) -> list[AutoReactionConfig]:
+            return self.configs
+
+    class _FakeResult:
+        def __init__(self, configs: list[AutoReactionConfig]) -> None:
+            self.configs = configs
+
+        def scalars(self) -> _FakeScalars:
+            return _FakeScalars(self.configs)
 
     class _FakeSession:
-        def __init__(self, config: AutoReactionConfig) -> None:
-            self.config = config
+        def __init__(self, configs: list[AutoReactionConfig]) -> None:
+            self.configs = configs
             self.committed = False
 
         async def __aenter__(self) -> _FakeSession:
@@ -125,19 +132,26 @@ async def test_exclude_command_adds_selected_member(monkeypatch) -> None:
             return None
 
         async def execute(self, _stmt) -> _FakeResult:
-            return _FakeResult(self.config)
+            return _FakeResult(self.configs)
 
         async def commit(self) -> None:
             self.committed = True
 
-    config = AutoReactionConfig(
+    config_a = AutoReactionConfig(
         id=7,
         guild_id="123",
         channel_id="999",
         emojis="[]",
         excluded_user_ids='["111"]',
     )
-    session = _FakeSession(config)
+    config_b = AutoReactionConfig(
+        id=8,
+        guild_id="123",
+        channel_id="998",
+        emojis="[]",
+        excluded_user_ids="[]",
+    )
+    session = _FakeSession([config_a, config_b])
     monkeypatch.setattr("src.cogs.auto_reaction.async_session", lambda: session)
 
     cog = _cog()
@@ -145,26 +159,38 @@ async def test_exclude_command_adds_selected_member(monkeypatch) -> None:
     interaction = _interaction(guild_id=123)
 
     await AutoReactionCog.auto_reaction_exclude.callback(
-        cog, interaction, config_id=7, user=_member(member_id=456), clear=False
+        cog, interaction, user=_member(member_id=456), clear=False
     )
 
     assert session.committed
-    assert decode_auto_reaction_user_ids(config.excluded_user_ids) == ["111", "456"]
+    assert decode_auto_reaction_user_ids(config_a.excluded_user_ids) == ["111", "456"]
+    assert decode_auto_reaction_user_ids(config_b.excluded_user_ids) == ["456"]
     cog.refresh.assert_awaited_once()
-    interaction.response.send_message.assert_called_once()
+    interaction.response.send_message.assert_called_once_with(
+        "<@456> をこのサーバーの Auto Reaction "
+        "除外ユーザーに追加しました。対象設定: 2件",
+        ephemeral=True,
+    )
 
 
 async def test_exclude_command_clears_config(monkeypatch) -> None:
-    class _FakeResult:
-        def __init__(self, config: AutoReactionConfig) -> None:
-            self.config = config
+    class _FakeScalars:
+        def __init__(self, configs: list[AutoReactionConfig]) -> None:
+            self.configs = configs
 
-        def scalar_one_or_none(self) -> AutoReactionConfig:
-            return self.config
+        def all(self) -> list[AutoReactionConfig]:
+            return self.configs
+
+    class _FakeResult:
+        def __init__(self, configs: list[AutoReactionConfig]) -> None:
+            self.configs = configs
+
+        def scalars(self) -> _FakeScalars:
+            return _FakeScalars(self.configs)
 
     class _FakeSession:
-        def __init__(self, config: AutoReactionConfig) -> None:
-            self.config = config
+        def __init__(self, configs: list[AutoReactionConfig]) -> None:
+            self.configs = configs
             self.committed = False
 
         async def __aenter__(self) -> _FakeSession:
@@ -174,19 +200,26 @@ async def test_exclude_command_clears_config(monkeypatch) -> None:
             return None
 
         async def execute(self, _stmt) -> _FakeResult:
-            return _FakeResult(self.config)
+            return _FakeResult(self.configs)
 
         async def commit(self) -> None:
             self.committed = True
 
-    config = AutoReactionConfig(
+    config_a = AutoReactionConfig(
         id=7,
         guild_id="123",
         channel_id="999",
         emojis="[]",
         excluded_user_ids='["111", "456"]',
     )
-    session = _FakeSession(config)
+    config_b = AutoReactionConfig(
+        id=8,
+        guild_id="123",
+        channel_id="998",
+        emojis="[]",
+        excluded_user_ids='["456"]',
+    )
+    session = _FakeSession([config_a, config_b])
     monkeypatch.setattr("src.cogs.auto_reaction.async_session", lambda: session)
 
     cog = _cog()
@@ -194,14 +227,15 @@ async def test_exclude_command_clears_config(monkeypatch) -> None:
     interaction = _interaction(guild_id=123)
 
     await AutoReactionCog.auto_reaction_exclude.callback(
-        cog, interaction, config_id=7, user=None, clear=True
+        cog, interaction, user=None, clear=True
     )
 
     assert session.committed
-    assert decode_auto_reaction_user_ids(config.excluded_user_ids) == []
+    assert decode_auto_reaction_user_ids(config_a.excluded_user_ids) == []
+    assert decode_auto_reaction_user_ids(config_b.excluded_user_ids) == []
     cog.refresh.assert_awaited_once()
     interaction.response.send_message.assert_called_once_with(
-        "設定ID 7 の除外ユーザーを全解除しました。",
+        "このサーバーの Auto Reaction 除外ユーザーを全解除しました。",
         ephemeral=True,
     )
 
