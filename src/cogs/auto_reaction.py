@@ -8,6 +8,7 @@
 - Webhook 経由の投稿 (GitHub / Zapier 等; ``message.webhook_id``)
 - システムメッセージ (参加通知・ピン通知等; ``MessageType.default`` /
   ``MessageType.reply`` 以外)
+- 設定の除外ユーザー ID に投稿者が含まれるもの
 - 設定に正規表現フィルタが指定されていて、本文がマッチしないもの
 
 ホットパス最適化: on_message は per-message に呼ばれるため DB アクセス・
@@ -26,12 +27,17 @@ import logging
 import re
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
+from sqlalchemy import select
 
 from src.database.engine import async_session
+from src.database.models import AutoReactionConfig
 from src.services.auto_reaction_service import (
     ChannelAutoReaction,
+    encode_auto_reaction_user_ids,
     get_enabled_auto_reactions,
+    normalize_auto_reaction_user_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,14 +58,30 @@ _REACTABLE_MESSAGE_TYPES: frozenset[discord.MessageType] = frozenset(
 _SWEEP_HISTORY_LIMIT = 50
 
 
+def _format_user_ids(user_ids: list[str]) -> str:
+    return ", ".join(user_ids) if user_ids else "(なし)"
+
+
+def _interaction_is_admin(interaction: discord.Interaction) -> bool:
+    permissions = getattr(interaction, "permissions", None)
+    if permissions is not None:
+        return bool(getattr(permissions, "administrator", False))
+    guild_permissions = getattr(interaction.user, "guild_permissions", None)
+    return bool(getattr(guild_permissions, "administrator", False))
+
+
 class _CachedConfig:
-    __slots__ = ("emojis", "pattern")
+    __slots__ = ("emojis", "excluded_user_ids", "pattern")
 
     def __init__(
-        self, emojis: list[discord.PartialEmoji], pattern: re.Pattern[str] | None
+        self,
+        emojis: list[discord.PartialEmoji],
+        pattern: re.Pattern[str] | None,
+        excluded_user_ids: frozenset[str] | None = None,
     ) -> None:
         self.emojis = emojis
         self.pattern = pattern
+        self.excluded_user_ids = excluded_user_ids or frozenset()
 
 
 class AutoReactionCog(commands.Cog):
@@ -94,12 +116,86 @@ class AutoReactionCog(commands.Cog):
         self._configs = {
             cid: [
                 _CachedConfig(
-                    emojis=_parse_emojis(record.emojis), pattern=record.pattern
+                    emojis=_parse_emojis(record.emojis),
+                    pattern=record.pattern,
+                    excluded_user_ids=record.excluded_user_ids,
                 )
                 for record in records
             ]
             for cid, records in raw_map.items()
         }
+
+    @app_commands.command(
+        name="auto-reaction-exclude",
+        description="Auto Reaction の除外ユーザーIDを設定します",
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    @app_commands.describe(
+        config_id="管理画面に表示される設定ID",
+        user_ids="除外するDiscordユーザーID。空白/カンマ区切り、省略で解除",
+    )
+    async def auto_reaction_exclude(
+        self,
+        interaction: discord.Interaction,
+        config_id: int,
+        user_ids: str | None = None,
+    ) -> None:
+        """Slash command から除外ユーザー ID を設定する。"""
+        if interaction.guild_id is None:
+            await interaction.response.send_message(
+                "このコマンドはサーバー内でのみ実行できます。",
+                ephemeral=True,
+            )
+            return
+        if not _interaction_is_admin(interaction):
+            await interaction.response.send_message(
+                "このコマンドは管理者のみ実行できます。",
+                ephemeral=True,
+            )
+            return
+        if config_id <= 0:
+            await interaction.response.send_message(
+                "設定IDは1以上の数値で指定してください。",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            excluded_user_ids = normalize_auto_reaction_user_ids(
+                [user_ids] if user_ids else []
+            )
+        except ValueError as e:
+            await interaction.response.send_message(
+                f"除外ユーザーIDが不正です: {e}",
+                ephemeral=True,
+            )
+            return
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(AutoReactionConfig).where(AutoReactionConfig.id == config_id)
+            )
+            config = result.scalar_one_or_none()
+            if config is None or config.guild_id != str(interaction.guild_id):
+                await interaction.response.send_message(
+                    "指定された設定IDがこのサーバーに見つかりません。",
+                    ephemeral=True,
+                )
+                return
+            config.excluded_user_ids = encode_auto_reaction_user_ids(
+                excluded_user_ids
+            )
+            await session.commit()
+
+        await self.refresh()
+        await interaction.response.send_message(
+            (
+                f"設定ID {config_id} の除外ユーザーIDを更新しました: "
+                f"{_format_user_ids(excluded_user_ids)}"
+            ),
+            ephemeral=True,
+        )
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -136,7 +232,10 @@ class AutoReactionCog(commands.Cog):
         # 含むケースに備えて重複を排除する (Discord は同じ絵文字を 2 回
         # 付けようとすると 4xx を返すため)。
         desired_by_key: dict[str, discord.PartialEmoji] = {}
+        author_id = str(message.author.id)
         for config in configs:
+            if author_id in config.excluded_user_ids:
+                continue
             if not config.emojis:
                 continue
             if config.pattern is not None and not config.pattern.search(

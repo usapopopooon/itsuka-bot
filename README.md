@@ -1,7 +1,8 @@
 # Itsuka Bot
 
 Discord で任意のチャンネルへの新規投稿に、設定した N 個のリアクションを
-自動で付ける Bot。設定はすべて Web 管理画面 (Next.js) から行う。
+自動で付ける Bot。主な設定は Web 管理画面 (Next.js) から行い、一部の
+管理操作は Discord の slash command からも行える。
 構成は `../discord-util-bot` を踏襲し、機能を AutoReaction だけに絞っている。
 
 ## アーキテクチャ
@@ -197,8 +198,15 @@ Coolify では `docker-compose.coolify.yml` を使う Docker Compose Application
 - **Privileged Gateway Intents**:
   - **Message Content Intent**: **ON** (正規表現フィルタで本文を読むため必須)
   - その他は OFF のまま
+- **Scopes** (招待時): `bot`, `applications.commands`
 - **Bot Permissions** (招待時): `View Channels`, `Send Messages`,
   `Add Reactions`, `Use External Emojis`, `Read Message History`
+
+## Slash Commands
+
+| Command | 概要 |
+| --- | --- |
+| `/auto-reaction-exclude config_id user_ids` | 指定した Auto Reaction 設定の除外ユーザーIDを更新。`user_ids` は空白/カンマ区切り、省略で解除 |
 
 ## 環境変数
 
@@ -223,7 +231,8 @@ Coolify では `docker-compose.coolify.yml` を使う Docker Compose Application
 | POST | `/auth/logout` | クッキー削除 |
 | GET | `/auth/me` | 認証中のユーザー名 |
 | GET | `/auto-reaction` | 設定一覧 + ギルド/チャンネルマップ |
-| POST | `/auto-reaction` | `{ guild_id, channel_id, emojis[] }` で新規作成 |
+| POST | `/auto-reaction` | `{ guild_id, channel_id, emojis[], excluded_user_ids?[] }` で新規作成 |
+| PATCH | `/auto-reaction/{id}` | `emojis[]`, `pattern`, `excluded_user_ids[]` を更新 |
 | PATCH | `/auto-reaction/{id}/toggle` | 有効/無効切替 |
 | DELETE | `/auto-reaction/{id}` | 削除 |
 

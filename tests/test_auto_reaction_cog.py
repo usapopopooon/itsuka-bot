@@ -13,6 +13,8 @@ import discord
 import pytest
 
 from src.cogs.auto_reaction import AutoReactionCog, _CachedConfig
+from src.database.models import AutoReactionConfig
+from src.services.auto_reaction_service import decode_auto_reaction_user_ids
 
 
 @pytest.fixture(autouse=True)
@@ -40,6 +42,7 @@ def _message(
     *,
     channel_id: int = 123,
     content: str = "",
+    author_id: int = 456,
     is_bot: bool = False,
     webhook_id: int | None = None,
     msg_type: discord.MessageType = discord.MessageType.default,
@@ -49,6 +52,7 @@ def _message(
     msg.id = 999
     msg.guild = MagicMock()
     msg.author = MagicMock()
+    msg.author.id = author_id
     msg.author.bot = is_bot
     msg.webhook_id = webhook_id
     msg.type = msg_type
@@ -65,6 +69,82 @@ def _cog() -> AutoReactionCog:
     bot = MagicMock()
     bot.user = MagicMock()
     return AutoReactionCog(bot)
+
+
+def _interaction(
+    *, guild_id: int | None = 123, administrator: bool = True
+) -> MagicMock:
+    interaction = MagicMock()
+    interaction.guild_id = guild_id
+    interaction.permissions = MagicMock()
+    interaction.permissions.administrator = administrator
+    interaction.user = MagicMock()
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+    return interaction
+
+
+async def test_exclude_command_rejects_non_admin() -> None:
+    cog = _cog()
+    interaction = _interaction(administrator=False)
+
+    await AutoReactionCog.auto_reaction_exclude.callback(
+        cog, interaction, config_id=1, user_ids="456"
+    )
+
+    interaction.response.send_message.assert_called_once_with(
+        "このコマンドは管理者のみ実行できます。",
+        ephemeral=True,
+    )
+
+
+async def test_exclude_command_updates_config(monkeypatch) -> None:
+    class _FakeResult:
+        def __init__(self, config: AutoReactionConfig) -> None:
+            self.config = config
+
+        def scalar_one_or_none(self) -> AutoReactionConfig:
+            return self.config
+
+    class _FakeSession:
+        def __init__(self, config: AutoReactionConfig) -> None:
+            self.config = config
+            self.committed = False
+
+        async def __aenter__(self) -> _FakeSession:
+            return self
+
+        async def __aexit__(self, *_args) -> None:
+            return None
+
+        async def execute(self, _stmt) -> _FakeResult:
+            return _FakeResult(self.config)
+
+        async def commit(self) -> None:
+            self.committed = True
+
+    config = AutoReactionConfig(
+        id=7,
+        guild_id="123",
+        channel_id="999",
+        emojis="[]",
+        excluded_user_ids="[]",
+    )
+    session = _FakeSession(config)
+    monkeypatch.setattr("src.cogs.auto_reaction.async_session", lambda: session)
+
+    cog = _cog()
+    cog.refresh = AsyncMock()  # type: ignore[method-assign]
+    interaction = _interaction(guild_id=123)
+
+    await AutoReactionCog.auto_reaction_exclude.callback(
+        cog, interaction, config_id=7, user_ids="456, <@789> 456"
+    )
+
+    assert session.committed
+    assert decode_auto_reaction_user_ids(config.excluded_user_ids) == ["456", "789"]
+    cog.refresh.assert_awaited_once()
+    interaction.response.send_message.assert_called_once()
 
 
 async def test_reconcile_adds_desired_on_fresh_message() -> None:
@@ -91,6 +171,44 @@ async def test_reconcile_skips_when_pattern_does_not_match() -> None:
 
     msg.add_reaction.assert_not_called()
     msg.remove_reaction.assert_not_called()
+
+
+async def test_reconcile_skips_excluded_author() -> None:
+    cog = _cog()
+    cog._configs = {
+        "123": [
+            _CachedConfig(
+                emojis=[_emoji("👍")],
+                pattern=None,
+                excluded_user_ids=frozenset({"456"}),
+            )
+        ]
+    }
+    msg = _message(content="hi", author_id=456)
+
+    await cog._reconcile(msg)
+
+    msg.add_reaction.assert_not_called()
+    msg.remove_reaction.assert_not_called()
+
+
+async def test_reconcile_removes_bot_reaction_when_author_becomes_excluded() -> None:
+    cog = _cog()
+    cog._configs = {
+        "123": [
+            _CachedConfig(
+                emojis=[_emoji("👍")],
+                pattern=None,
+                excluded_user_ids=frozenset({"456"}),
+            )
+        ]
+    }
+    msg = _message(content="hi", author_id=456, reactions=[_reaction("👍", me=True)])
+
+    await cog._reconcile(msg)
+
+    msg.add_reaction.assert_not_called()
+    msg.remove_reaction.assert_called_once()
 
 
 async def test_reconcile_is_idempotent_when_already_in_sync() -> None:

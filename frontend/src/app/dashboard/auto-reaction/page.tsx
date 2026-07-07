@@ -15,6 +15,9 @@ import { ToggleButton } from '@/components/toggle-button'
 import { EmojiPicker, renderEmojiToken } from '@/components/emoji-picker'
 
 const MAX_EMOJIS = 20
+const USER_ID_PATTERN = /^\d{1,32}$/
+const USER_MENTION_PATTERN = /^<@!?(\d{1,32})>$/
+const USER_ID_SPLIT_PATTERN = /[\s,、]+/
 
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId
@@ -24,6 +27,18 @@ function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: s
   const list = channels[guildId] ?? []
   const ch = list.find((c) => c.id === channelId)
   return ch ? `#${ch.name}` : channelId
+}
+
+function parseUserIdsInput(raw: string): string[] {
+  const ids: string[] = []
+  for (const token of raw.split(USER_ID_SPLIT_PATTERN)) {
+    if (!token) continue
+    const trimmed = token.trim()
+    const mentionMatch = trimmed.match(USER_MENTION_PATTERN)
+    const id = mentionMatch ? mentionMatch[1] : trimmed
+    if (!ids.includes(id)) ids.push(id)
+  }
+  return ids
 }
 
 interface AutoReactionListResponse {
@@ -48,6 +63,7 @@ export default function AutoReactionPage() {
   const [selectedChannel, setSelectedChannel] = useState('')
   const [picked, setPicked] = useState<string[]>([])
   const [pattern, setPattern] = useState('')
+  const [excludedUserIdsInput, setExcludedUserIdsInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -90,6 +106,7 @@ export default function AutoReactionPage() {
     setSelectedChannel('')
     setPicked([])
     setPattern('')
+    setExcludedUserIdsInput('')
     setError('')
   }
 
@@ -99,6 +116,7 @@ export default function AutoReactionPage() {
     setSelectedChannel(row.channel_id)
     setPicked(row.emojis)
     setPattern(row.pattern ?? '')
+    setExcludedUserIdsInput(row.excluded_user_ids.join('\n'))
     setError('')
     // 編集対象がテーブルから上のフォームへ「移動」したことが分かるようスクロール
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -109,6 +127,12 @@ export default function AutoReactionPage() {
     setError('')
     if (!selectedGuild || !selectedChannel) return
     if (picked.length === 0) return
+    const excludedUserIds = parseUserIdsInput(excludedUserIdsInput)
+    const invalidUserId = excludedUserIds.find((id) => !USER_ID_PATTERN.test(id))
+    if (invalidUserId) {
+      setError(`除外ユーザーIDは数字のみで指定してください: ${invalidUserId}`)
+      return
+    }
     setSubmitting(true)
     try {
       const isEdit = editingId !== null
@@ -116,11 +140,12 @@ export default function AutoReactionPage() {
       const method = isEdit ? 'PATCH' : 'POST'
       const trimmedPattern = pattern.trim() ? pattern.trim() : null
       const payload = isEdit
-        ? { emojis: picked, pattern: trimmedPattern }
+        ? { emojis: picked, excluded_user_ids: excludedUserIds, pattern: trimmedPattern }
         : {
             guild_id: selectedGuild,
             channel_id: selectedChannel,
             emojis: picked,
+            excluded_user_ids: excludedUserIds,
             pattern: trimmedPattern,
           }
       const res = await fetch(url, {
@@ -144,6 +169,10 @@ export default function AutoReactionPage() {
   const isEdit = editingId !== null
 
   const columns: Column<AutoReactionConfig>[] = [
+    {
+      header: 'ID',
+      accessor: (row) => <code className="text-xs">{row.id}</code>,
+    },
     {
       header: 'Server',
       accessor: (row) => resolveGuildName(guilds, row.guild_id),
@@ -170,6 +199,21 @@ export default function AutoReactionPage() {
           <code className="text-xs">{row.pattern}</code>
         ) : (
           <span className="text-xs text-muted-foreground">(全件)</span>
+        ),
+    },
+    {
+      header: 'Excluded Users',
+      accessor: (row) =>
+        row.excluded_user_ids.length > 0 ? (
+          <span className="inline-flex max-w-64 flex-wrap gap-1">
+            {row.excluded_user_ids.map((id) => (
+              <code key={id} className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                {id}
+              </code>
+            ))}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">(none)</span>
         ),
     },
     {
@@ -285,6 +329,24 @@ export default function AutoReactionPage() {
                   でマッチした投稿だけにリアクションを付ける。
                   空欄なら全件にリアクション。大文字小文字を無視するなら先頭に <code>(?i)</code>{' '}
                   を付ける。
+                </p>
+              </div>
+              <div>
+                <label htmlFor="excluded-user-ids" className="mb-1.5 block text-sm font-medium">
+                  除外ユーザーID <span className="text-muted-foreground">(任意)</span>
+                </label>
+                <textarea
+                  id="excluded-user-ids"
+                  rows={3}
+                  placeholder="123456789012345678&#10;234567890123456789"
+                  value={excludedUserIdsInput}
+                  onChange={(e) => setExcludedUserIdsInput(e.target.value)}
+                  spellCheck={false}
+                  className="min-h-20 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm dark:bg-input/30"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  ここに入れたユーザーIDの投稿には、この設定のリアクションを付けない。
+                  空白、改行、カンマ区切りで複数指定できます。
                 </p>
               </div>
               {error && <p className="text-sm text-destructive-foreground">{error}</p>}
