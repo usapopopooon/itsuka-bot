@@ -43,6 +43,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-itsuka}:${SERVICE_PASSWORD_POSTGRES:-itsuka-postgres-password}@db:5432/${POSTGRES_DB:-itsuka_bot}
       DISCORD_TOKEN: ${DISCORD_TOKEN:?set DISCORD_TOKEN}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LEVEL_BOT_API_URL: ${LEVEL_BOT_API_URL:-}
+      LEVEL_BOT_API_TOKEN: ${LEVEL_BOT_API_TOKEN:-}
     command: python -m src.main
 
   migrate:

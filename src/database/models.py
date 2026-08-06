@@ -171,6 +171,32 @@ class MessageMilestoneProcessedMessage(Base):
         )
 
 
+class MessageComboXpDelivery(Base):
+    """level-botへのXP付与とDiscord通知を再送可能にするoutbox。"""
+
+    __tablename__ = "message_combo_xp_deliveries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    config_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    streak_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    xp_delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    notification_delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class DiscordGuild(Base):
     """Discord ギルド情報のキャッシュテーブル。
 

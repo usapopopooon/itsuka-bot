@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 from src.cogs.message_milestone import MessageMilestoneCog
+from src.database.models import MessageComboXpDelivery
 from src.services.message_milestone_service import ChannelMessageMilestone
 
 
@@ -92,6 +94,28 @@ def test_embed_fallback_content_uses_rendered_embed_fields() -> None:
     rendered = cog._render_reward(config, author)
 
     assert cog._embed_fallback_content(rendered) == "Itsuka さん\n7 回達成"
+
+
+def test_combo_embed_explains_first_day_and_reward() -> None:
+    base = {
+        "event_id": "itsuka:1:100",
+        "config_id": 1,
+        "guild_id": "10",
+        "channel_id": "20",
+        "user_id": "30",
+        "observed_at": datetime(2026, 8, 7, tzinfo=UTC),
+    }
+    guide = MessageMilestoneCog._build_combo_embed(
+        MessageComboXpDelivery(**base, streak_days=1)
+    )
+    reward = MessageMilestoneCog._build_combo_embed(
+        MessageComboXpDelivery(**base, streak_days=5)
+    )
+
+    assert guide.title == "🔥 投稿コンボ開始！"
+    assert "2日・3日・5日・10日・20日" in (guide.description or "")
+    assert reward.title == "🎉 5日コンボ達成！"
+    assert "100 XPを獲得しました" in (reward.description or "")
 
 
 def test_countdown_step_updates_every_second() -> None:

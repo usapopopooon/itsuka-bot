@@ -9,8 +9,19 @@ from dataclasses import dataclass
 
 import discord
 from discord.ext import commands, tasks
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
 from src.database.engine import async_session
+from src.database.models import MessageComboXpDelivery
+from src.services.level_bot_client import award_message_combo_xp
+from src.services.message_combo_xp_service import (
+    MESSAGE_COMBO_XP_REWARDS,
+    enqueue_message_combo_delivery,
+    get_pending_message_combo_deliveries,
+    mark_message_combo_notification_delivered,
+    mark_message_combo_xp_delivered,
+)
 from src.services.message_milestone_service import (
     CONDITION_CONSECUTIVE_POSTS,
     MAX_MILESTONE_MESSAGE_LENGTH,
@@ -62,6 +73,7 @@ class MessageMilestoneCog(commands.Cog):
         self._configs: dict[str, list[ChannelMessageMilestone]] | None = None
         self._progress_lock = asyncio.Lock()
         self._refresh_lock = asyncio.Lock()
+        self._combo_delivery_lock = asyncio.Lock()
         self._last_refresh_monotonic = 0.0
         self._delete_tasks: set[asyncio.Task[None]] = set()
 
@@ -70,11 +82,14 @@ class MessageMilestoneCog(commands.Cog):
         await self._backfill_pending_configs()
         await self.refresh()
         self._refresh_configs.start()
+        self._retry_combo_deliveries.start()
         logger.info("MessageMilestone cog loaded, refresh loop started")
 
     async def cog_unload(self) -> None:
         if self._refresh_configs.is_running():
             self._refresh_configs.cancel()
+        if self._retry_combo_deliveries.is_running():
+            self._retry_combo_deliveries.cancel()
         for task in list(self._delete_tasks):
             task.cancel()
 
@@ -266,6 +281,7 @@ class MessageMilestoneCog(commands.Cog):
             [config.id for config in configs],
         )
 
+        combo_delivery_enqueued = False
         async with self._progress_lock, async_session() as session:
             for config in configs:
                 if config.pattern is not None and not config.pattern.search(
@@ -347,6 +363,23 @@ class MessageMilestoneCog(commands.Cog):
                         message.id,
                         config.id,
                     )
+                if (
+                    settings.level_bot_api_url
+                    and settings.level_bot_api_token
+                    and config.condition_type != CONDITION_CONSECUTIVE_POSTS
+                    and result.crossed_daily_goal
+                ):
+                    delivery = await enqueue_message_combo_delivery(
+                        session,
+                        config_id=config.id,
+                        guild_id=str(message.guild.id),
+                        channel_id=str(message.channel.id),
+                        user_id=str(message.author.id),
+                        message_id=str(message.id),
+                        streak_days=result.streak_days,
+                        observed_at=message.created_at,
+                    )
+                    combo_delivery_enqueued |= delivery is not None
                 if result.should_send:
                     logger.info(
                         "MessageMilestone: sending reward config=%s user=%s "
@@ -394,6 +427,103 @@ class MessageMilestoneCog(commands.Cog):
                             config.id,
                             message.author.id,
                         )
+
+        if combo_delivery_enqueued:
+            await self._deliver_pending_combo_deliveries()
+
+    async def _deliver_pending_combo_deliveries(self) -> None:
+        if not settings.level_bot_api_url or not settings.level_bot_api_token:
+            return
+        async with self._combo_delivery_lock, async_session() as session:
+            deliveries = await get_pending_message_combo_deliveries(session)
+            for delivery in deliveries:
+                await self._deliver_combo_delivery(session, delivery)
+
+    async def _deliver_combo_delivery(
+        self,
+        session: AsyncSession,
+        delivery: MessageComboXpDelivery,
+    ) -> None:
+        if delivery.xp_delivered_at is None:
+            try:
+                award = await award_message_combo_xp(
+                    api_url=settings.level_bot_api_url,
+                    api_token=settings.level_bot_api_token,
+                    event_id=delivery.event_id,
+                    guild_id=delivery.guild_id,
+                    channel_id=delivery.channel_id,
+                    user_id=delivery.user_id,
+                    config_id=delivery.config_id,
+                    streak_days=delivery.streak_days,
+                    observed_at=delivery.observed_at,
+                )
+                expected_xp = MESSAGE_COMBO_XP_REWARDS[delivery.streak_days]
+                if (
+                    award.event_id != delivery.event_id
+                    or award.streak_days != delivery.streak_days
+                    or award.awarded_xp != expected_xp
+                ):
+                    raise RuntimeError("level-bot returned an inconsistent combo award")
+                await mark_message_combo_xp_delivered(session, delivery)
+            except Exception:
+                logger.exception(
+                    "MessageComboXP: XP delivery failed event=%s; will retry",
+                    delivery.event_id,
+                )
+                return
+
+        if delivery.notification_delivered_at is not None:
+            return
+        channel = self.bot.get_channel(int(delivery.channel_id))
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(int(delivery.channel_id))
+            except discord.HTTPException:
+                logger.exception(
+                    "MessageComboXP: channel fetch failed event=%s; will retry",
+                    delivery.event_id,
+                )
+                return
+        if not isinstance(channel, discord.abc.Messageable):
+            logger.error(
+                "MessageComboXP: channel is not messageable event=%s channel=%s",
+                delivery.event_id,
+                delivery.channel_id,
+            )
+            return
+        embed = self._build_combo_embed(delivery)
+        try:
+            await channel.send(content=f"<@{delivery.user_id}>", embed=embed)
+        except discord.HTTPException:
+            logger.exception(
+                "MessageComboXP: notification failed event=%s; will retry",
+                delivery.event_id,
+            )
+            return
+        await mark_message_combo_notification_delivered(session, delivery)
+
+    @staticmethod
+    def _build_combo_embed(delivery: MessageComboXpDelivery) -> discord.Embed:
+        if delivery.streak_days == 1:
+            embed = discord.Embed(
+                title="🔥 投稿コンボ開始！",
+                description=(
+                    "毎日1回以上投稿すると、2日・3日・5日・10日・20日コンボで"
+                    "サーバーXPボーナスを獲得できます！"
+                ),
+                color=discord.Color.orange(),
+            )
+        else:
+            xp = MESSAGE_COMBO_XP_REWARDS[delivery.streak_days]
+            embed = discord.Embed(
+                title=f"🎉 {delivery.streak_days}日コンボ達成！",
+                description=(
+                    f"投稿コンボを達成したので、サーバーでの {xp} XPを獲得しました！"
+                ),
+                color=discord.Color.gold(),
+            )
+        embed.set_footer(text=f"投稿コンボ • {delivery.event_id}")
+        return embed
 
     async def _send_reward(
         self,
@@ -668,6 +798,17 @@ class MessageMilestoneCog(commands.Cog):
 
     @_refresh_configs.before_loop
     async def _before_refresh_configs(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(seconds=30)
+    async def _retry_combo_deliveries(self) -> None:
+        try:
+            await self._deliver_pending_combo_deliveries()
+        except Exception:
+            logger.exception("MessageComboXP: pending delivery loop failed")
+
+    @_retry_combo_deliveries.before_loop
+    async def _before_retry_combo_deliveries(self) -> None:
         await self.bot.wait_until_ready()
 
 

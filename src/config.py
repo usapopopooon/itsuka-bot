@@ -29,6 +29,8 @@ class Settings:
     admin_password: str
     web_host: str
     web_port: int
+    level_bot_api_url: str
+    level_bot_api_token: str
 
 
 def _normalize_database_url(raw: str) -> str:
@@ -77,6 +79,8 @@ def _load() -> Settings:
         admin_password=os.environ.get("ADMIN_PASSWORD", ""),
         web_host=_get("WEB_HOST", "0.0.0.0"),
         web_port=web_port,
+        level_bot_api_url=os.environ.get("LEVEL_BOT_API_URL", "").strip().rstrip("/"),
+        level_bot_api_token=os.environ.get("LEVEL_BOT_API_TOKEN", "").strip(),
     )
 
 
