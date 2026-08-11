@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
@@ -38,6 +39,19 @@ def _daily_combo_config() -> ChannelMessageMilestone:
         backfill_completed=True,
         consecutive_notification_limit="none",
         consecutive_notification_daily_limit=1,
+    )
+
+
+def _merged_combo_config() -> ChannelMessageMilestone:
+    return ChannelMessageMilestone(
+        **{
+            **_daily_combo_config().__dict__,
+            "response_type": "embed",
+            "message_content": None,
+            "embed_title": "{username} さん、投稿達成！",
+            "embed_description": "{current_count}日目の投稿です",
+            "delete_after_seconds": 30,
+        }
     )
 
 
@@ -165,10 +179,19 @@ async def test_delivery_waits_for_xp_then_notifies_once(
     session_factory, monkeypatch
 ) -> None:
     channel = MagicMock(spec=discord.TextChannel)
-    channel.send = AsyncMock()
+    sent_message = MagicMock(spec=discord.Message)
+    sent_message.id = 999
+    channel.send = AsyncMock(return_value=sent_message)
+    author = MagicMock(spec=discord.User)
+    author.display_name = "Itsuka"
+    author.name = "Itsuka"
     bot = MagicMock()
     bot.get_channel.return_value = channel
+    bot.get_guild.return_value = None
+    bot.get_user.return_value = author
     cog = MessageMilestoneCog(bot)
+    cog._configs = {"20": [_merged_combo_config()]}
+    cog._schedule_delete_countdown = MagicMock()
     award = AsyncMock(
         return_value=MessageComboXpAward(
             event_id="itsuka:1:300",
@@ -196,8 +219,93 @@ async def test_delivery_waits_for_xp_then_notifies_once(
 
         award.assert_awaited_once()
         channel.send.assert_awaited_once()
+        embed = channel.send.await_args.kwargs["embed"]
+        assert embed.title == "Itsuka さん、投稿達成！"
+        assert embed.description == "5日目の投稿です"
+        assert embed.fields[0].name == "🎉 5日コンボ達成！"
+        assert "+100 XP" in embed.fields[0].value
+        assert embed.footer.text == "削除まで: 30秒"
+        assert (
+            cog._schedule_delete_countdown.call_args.kwargs["combo_delivery"]
+            is delivery
+        )
         assert delivery.xp_delivered_at is not None
         assert delivery.notification_delivered_at is not None
+
+
+async def test_track_sends_one_merged_countdown_embed_per_combo_day(
+    session_factory, monkeypatch
+) -> None:
+    config = _merged_combo_config()
+    channel = MagicMock(spec=discord.TextChannel)
+    channel.id = 20
+    channel.parent_id = None
+    sent_messages = [MagicMock(spec=discord.Message), MagicMock(spec=discord.Message)]
+    sent_messages[0].id = 901
+    sent_messages[1].id = 902
+    channel.send = AsyncMock(side_effect=sent_messages)
+    author = MagicMock(spec=discord.Member)
+    author.id = 30
+    author.bot = False
+    author.display_name = "Itsuka"
+    author.name = "Itsuka"
+    guild = MagicMock(spec=discord.Guild)
+    guild.id = 10
+    guild.get_member.return_value = author
+    bot = MagicMock()
+    bot.get_channel.return_value = channel
+    bot.get_guild.return_value = guild
+    cog = MessageMilestoneCog(bot)
+    cog._configs = {"20": [config]}
+    cog._last_refresh_monotonic = float("inf")
+    cog._schedule_delete_countdown = MagicMock()
+
+    award = AsyncMock(
+        return_value=MessageComboXpAward(
+            event_id="itsuka:1:200",
+            streak_days=2,
+            awarded_xp=20,
+            duplicate=False,
+        )
+    )
+    monkeypatch.setattr("src.cogs.message_milestone.async_session", session_factory)
+    monkeypatch.setattr("src.cogs.message_milestone.award_message_combo_xp", award)
+    monkeypatch.setattr(
+        "src.cogs.message_milestone.settings",
+        SimpleNamespace(
+            level_bot_api_url="https://level.example.test",
+            level_bot_api_token="test-token",
+        ),
+    )
+
+    def message(message_id: int, created_at: datetime) -> discord.Message:
+        item = MagicMock(spec=discord.Message)
+        item.id = message_id
+        item.guild = guild
+        item.author = author
+        item.channel = channel
+        item.webhook_id = None
+        item.type = discord.MessageType.default
+        item.content = "投稿"
+        item.created_at = created_at
+        return item
+
+    await cog._track(message(100, datetime(2026, 8, 7, tzinfo=UTC)))
+    await cog._track(message(200, datetime(2026, 8, 8, tzinfo=UTC)))
+
+    award.assert_awaited_once()
+    assert award.await_args.kwargs["config_id"] == config.id
+    assert channel.send.await_count == 2
+    first_embed = channel.send.await_args_list[0].kwargs["embed"]
+    second_embed = channel.send.await_args_list[1].kwargs["embed"]
+    assert first_embed.fields[0].name == "🔥 投稿コンボ開始！"
+    assert second_embed.fields[0].name == "🎉 2日コンボ達成！"
+    assert "+20 XP" in second_embed.fields[0].value
+    assert first_embed.footer.text == "削除まで: 30秒"
+    assert second_embed.footer.text == "削除まで: 30秒"
+    assert cog._schedule_delete_countdown.call_count == 2
+    async with session_factory() as session:
+        assert await get_pending_message_combo_deliveries(session) == []
 
 
 async def test_failed_xp_delivery_does_not_claim_or_announce(

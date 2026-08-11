@@ -96,7 +96,7 @@ def test_embed_fallback_content_uses_rendered_embed_fields() -> None:
     assert cog._embed_fallback_content(rendered) == "Itsuka さん\n7 回達成"
 
 
-def test_combo_embed_explains_first_day_and_reward() -> None:
+def test_combo_section_is_merged_below_existing_countdown_embed() -> None:
     base = {
         "event_id": "itsuka:1:100",
         "config_id": 1,
@@ -105,17 +105,39 @@ def test_combo_embed_explains_first_day_and_reward() -> None:
         "user_id": "30",
         "observed_at": datetime(2026, 8, 7, tzinfo=UTC),
     }
-    guide = MessageMilestoneCog._build_combo_embed(
-        MessageComboXpDelivery(**base, streak_days=1)
+    cog = MessageMilestoneCog(MagicMock())
+    config = ChannelMessageMilestone(
+        **{
+            **_config().__dict__,
+            "response_type": "embed",
+            "delete_after_seconds": 30,
+        }
     )
-    reward = MessageMilestoneCog._build_combo_embed(
-        MessageComboXpDelivery(**base, streak_days=5)
+    author = MagicMock()
+    author.display_name = "Itsuka"
+    author.name = "fallback"
+    rendered = cog._render_reward(config, author)
+    guide = cog._build_embed(
+        config,
+        rendered,
+        30,
+        combo_delivery=MessageComboXpDelivery(**base, streak_days=1),
+    )
+    reward = cog._build_embed(
+        config,
+        rendered,
+        30,
+        combo_delivery=MessageComboXpDelivery(**base, streak_days=5),
     )
 
-    assert guide.title == "🔥 投稿コンボ開始！"
-    assert "2日・3日・5日・10日・20日" in (guide.description or "")
-    assert reward.title == "🎉 5日コンボ達成！"
-    assert "100 XPを獲得しました" in (reward.description or "")
+    assert guide.title == "Itsuka"
+    assert guide.description == "7 posts"
+    assert guide.fields[0].name == "🔥 投稿コンボ開始！"
+    assert "2日・3日・5日・10日・20日" in guide.fields[0].value
+    assert guide.footer.text == "削除まで: 30秒"
+    assert reward.fields[0].name == "🎉 5日コンボ達成！"
+    assert "+100 XP" in reward.fields[0].value
+    assert reward.footer.text == "削除まで: 30秒"
 
 
 def test_countdown_step_updates_every_second() -> None:

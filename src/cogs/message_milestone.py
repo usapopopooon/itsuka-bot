@@ -284,6 +284,7 @@ class MessageMilestoneCog(commands.Cog):
         combo_delivery_enqueued = False
         async with self._progress_lock, async_session() as session:
             for config in configs:
+                combo_delivery: MessageComboXpDelivery | None = None
                 if config.pattern is not None and not config.pattern.search(
                     message.content
                 ):
@@ -369,7 +370,7 @@ class MessageMilestoneCog(commands.Cog):
                     and config.condition_type != CONDITION_CONSECUTIVE_POSTS
                     and result.crossed_daily_goal
                 ):
-                    delivery = await enqueue_message_combo_delivery(
+                    combo_delivery = await enqueue_message_combo_delivery(
                         session,
                         config_id=config.id,
                         guild_id=str(message.guild.id),
@@ -379,8 +380,17 @@ class MessageMilestoneCog(commands.Cog):
                         streak_days=result.streak_days,
                         observed_at=message.created_at,
                     )
-                    combo_delivery_enqueued |= delivery is not None
+                    combo_delivery_enqueued |= combo_delivery is not None
                 if result.should_send:
+                    if combo_delivery is not None:
+                        logger.info(
+                            "MessageMilestone: deferring reward config=%s user=%s "
+                            "until combo XP delivery event=%s",
+                            config.id,
+                            message.author.id,
+                            combo_delivery.event_id,
+                        )
+                        continue
                     logger.info(
                         "MessageMilestone: sending reward config=%s user=%s "
                         "channel=%s response_type=%s delete_after=%s",
@@ -474,6 +484,17 @@ class MessageMilestoneCog(commands.Cog):
 
         if delivery.notification_delivered_at is not None:
             return
+        config = self._config_by_id(delivery.config_id)
+        if config is None:
+            await self.refresh()
+            config = self._config_by_id(delivery.config_id)
+        if config is None:
+            logger.error(
+                "MessageComboXP: config is unavailable event=%s config=%s",
+                delivery.event_id,
+                delivery.config_id,
+            )
+            return
         channel = self.bot.get_channel(int(delivery.channel_id))
         if channel is None:
             try:
@@ -491,39 +512,79 @@ class MessageMilestoneCog(commands.Cog):
                 delivery.channel_id,
             )
             return
-        embed = self._build_combo_embed(delivery)
-        try:
-            await channel.send(content=f"<@{delivery.user_id}>", embed=embed)
-        except discord.HTTPException:
-            logger.exception(
-                "MessageComboXP: notification failed event=%s; will retry",
+        author = await self._resolve_combo_author(delivery)
+        if author is None:
+            return
+        sent = await self._send_reward(
+            channel,
+            config,
+            author,
+            current_count=delivery.streak_days,
+            combo_delivery=delivery,
+        )
+        if not sent:
+            logger.info(
+                "MessageComboXP: merged notification failed event=%s; will retry",
                 delivery.event_id,
             )
             return
+        await mark_message_milestone_reward_sent(
+            session,
+            config_id=delivery.config_id,
+            user_id=delivery.user_id,
+        )
         await mark_message_combo_notification_delivered(session, delivery)
 
+    def _config_by_id(self, config_id: int) -> ChannelMessageMilestone | None:
+        if self._configs is None:
+            return None
+        return next(
+            (
+                config
+                for configs in self._configs.values()
+                for config in configs
+                if config.id == config_id
+            ),
+            None,
+        )
+
+    async def _resolve_combo_author(
+        self, delivery: MessageComboXpDelivery
+    ) -> discord.Member | discord.User | None:
+        user_id = int(delivery.user_id)
+        guild = self.bot.get_guild(int(delivery.guild_id))
+        if guild is not None:
+            member = guild.get_member(user_id)
+            if member is not None:
+                return member
+        user = self.bot.get_user(user_id)
+        if user is not None:
+            return user
+        try:
+            return await self.bot.fetch_user(user_id)
+        except discord.HTTPException:
+            logger.exception(
+                "MessageComboXP: user fetch failed event=%s user=%s; will retry",
+                delivery.event_id,
+                delivery.user_id,
+            )
+            return None
+
     @staticmethod
-    def _build_combo_embed(delivery: MessageComboXpDelivery) -> discord.Embed:
+    def _combo_section(delivery: MessageComboXpDelivery) -> tuple[str, str]:
         if delivery.streak_days == 1:
-            embed = discord.Embed(
-                title="🔥 投稿コンボ開始！",
-                description=(
+            return (
+                "🔥 投稿コンボ開始！",
+                (
                     "毎日1回以上投稿すると、2日・3日・5日・10日・20日コンボで"
                     "サーバーXPボーナスを獲得できます！"
                 ),
-                color=discord.Color.orange(),
             )
-        else:
-            xp = MESSAGE_COMBO_XP_REWARDS[delivery.streak_days]
-            embed = discord.Embed(
-                title=f"🎉 {delivery.streak_days}日コンボ達成！",
-                description=(
-                    f"投稿コンボを達成したので、サーバーでの {xp} XPを獲得しました！"
-                ),
-                color=discord.Color.gold(),
-            )
-        embed.set_footer(text=f"投稿コンボ • {delivery.event_id}")
-        return embed
+        xp = MESSAGE_COMBO_XP_REWARDS[delivery.streak_days]
+        return (
+            f"🎉 {delivery.streak_days}日コンボ達成！",
+            f"サーバーXPを **+{xp} XP** 獲得しました！",
+        )
 
     async def _send_reward(
         self,
@@ -532,10 +593,13 @@ class MessageMilestoneCog(commands.Cog):
         author: discord.Member | discord.User,
         *,
         current_count: int | None = None,
+        combo_delivery: MessageComboXpDelivery | None = None,
     ) -> bool:
         try:
             rendered = self._render_reward(config, author, current_count=current_count)
-            if not self._rendered_reward_is_sendable(config, rendered):
+            if not self._rendered_reward_is_sendable(
+                config, rendered, combo_delivery=combo_delivery
+            ):
                 logger.info(
                     "MessageMilestone: rendered reward too long for config %s "
                     "content_len=%s title_len=%s description_len=%s",
@@ -546,7 +610,12 @@ class MessageMilestoneCog(commands.Cog):
                 )
                 return False
             if config.response_type == "embed":
-                embed = self._build_embed(config, rendered, config.delete_after_seconds)
+                embed = self._build_embed(
+                    config,
+                    rendered,
+                    config.delete_after_seconds,
+                    combo_delivery=combo_delivery,
+                )
                 try:
                     sent = await channel.send(content=rendered.content, embed=embed)
                 except discord.Forbidden as exc:
@@ -559,7 +628,10 @@ class MessageMilestoneCog(commands.Cog):
                         exc,
                     )
                     fallback = self._embed_fallback_content(rendered)
-                    if len(fallback) > MAX_MILESTONE_MESSAGE_LENGTH:
+                    fallback_with_combo = self._with_combo_content(
+                        fallback, combo_delivery
+                    )
+                    if len(fallback_with_combo) > MAX_MILESTONE_MESSAGE_LENGTH:
                         logger.info(
                             "MessageMilestone: embed fallback too long for config %s "
                             "fallback_len=%s",
@@ -569,7 +641,7 @@ class MessageMilestoneCog(commands.Cog):
                         return False
                     sent = await channel.send(
                         self._with_countdown_content(
-                            fallback, config.delete_after_seconds
+                            fallback_with_combo, config.delete_after_seconds
                         )
                     )
                     self._schedule_delete_countdown(
@@ -580,6 +652,7 @@ class MessageMilestoneCog(commands.Cog):
                             embed_title=None,
                             embed_description=None,
                         ),
+                        combo_delivery=combo_delivery,
                         force_plain=True,
                     )
                     logger.info(
@@ -589,7 +662,12 @@ class MessageMilestoneCog(commands.Cog):
                         sent.id,
                     )
                     return True
-                self._schedule_delete_countdown(sent, config, rendered)
+                self._schedule_delete_countdown(
+                    sent,
+                    config,
+                    rendered,
+                    combo_delivery=combo_delivery,
+                )
                 logger.info(
                     "MessageMilestone: sent embed reward for config %s message=%s",
                     config.id,
@@ -598,10 +676,16 @@ class MessageMilestoneCog(commands.Cog):
                 return True
             sent = await channel.send(
                 self._with_countdown_content(
-                    rendered.content or "", config.delete_after_seconds
+                    self._with_combo_content(rendered.content or "", combo_delivery),
+                    config.delete_after_seconds,
                 )
             )
-            self._schedule_delete_countdown(sent, config, rendered)
+            self._schedule_delete_countdown(
+                sent,
+                config,
+                rendered,
+                combo_delivery=combo_delivery,
+            )
             logger.info(
                 "MessageMilestone: sent plain reward for config %s message=%s",
                 config.id,
@@ -664,6 +748,7 @@ class MessageMilestoneCog(commands.Cog):
         config: ChannelMessageMilestone,
         rendered: _RenderedReward,
         *,
+        combo_delivery: MessageComboXpDelivery | None = None,
         force_plain: bool = False,
     ) -> None:
         if config.delete_after_seconds is None:
@@ -677,7 +762,11 @@ class MessageMilestoneCog(commands.Cog):
         )
         task = asyncio.create_task(
             self._delete_with_countdown(
-                message, config, rendered, force_plain=force_plain
+                message,
+                config,
+                rendered,
+                combo_delivery=combo_delivery,
+                force_plain=force_plain,
             )
         )
         self._delete_tasks.add(task)
@@ -689,6 +778,7 @@ class MessageMilestoneCog(commands.Cog):
         config: ChannelMessageMilestone,
         rendered: _RenderedReward,
         *,
+        combo_delivery: MessageComboXpDelivery | None = None,
         force_plain: bool = False,
     ) -> None:
         if config.delete_after_seconds is None:
@@ -702,12 +792,20 @@ class MessageMilestoneCog(commands.Cog):
                 if config.response_type == "embed" and not force_plain:
                     await message.edit(
                         content=rendered.content,
-                        embed=self._build_embed(config, rendered, remaining),
+                        embed=self._build_embed(
+                            config,
+                            rendered,
+                            remaining,
+                            combo_delivery=combo_delivery,
+                        ),
                     )
                 else:
                     await message.edit(
                         content=self._with_countdown_content(
-                            rendered.content or "", remaining
+                            self._with_combo_content(
+                                rendered.content or "", combo_delivery
+                            ),
+                            remaining,
                         )
                     )
             await asyncio.sleep(1)
@@ -729,15 +827,30 @@ class MessageMilestoneCog(commands.Cog):
         config: ChannelMessageMilestone,
         rendered: _RenderedReward,
         remaining: int | None = None,
+        *,
+        combo_delivery: MessageComboXpDelivery | None = None,
     ) -> discord.Embed:
         embed = discord.Embed(
             title=rendered.embed_title,
             description=rendered.embed_description,
             color=config.embed_color,
         )
+        if combo_delivery is not None:
+            title, description = self._combo_section(combo_delivery)
+            embed.add_field(name=title, value=description, inline=False)
         if remaining is not None:
             embed.set_footer(text=f"削除まで: {remaining}秒")
         return embed
+
+    def _with_combo_content(
+        self,
+        content: str,
+        combo_delivery: MessageComboXpDelivery | None,
+    ) -> str:
+        if combo_delivery is None:
+            return content
+        title, description = self._combo_section(combo_delivery)
+        return f"{content}\n\n**{title}**\n{description}".strip()
 
     def _with_countdown_content(self, content: str, remaining: int | None) -> str:
         if remaining is None:
@@ -773,13 +886,16 @@ class MessageMilestoneCog(commands.Cog):
         )
 
     def _rendered_reward_is_sendable(
-        self, config: ChannelMessageMilestone, rendered: _RenderedReward
+        self,
+        config: ChannelMessageMilestone,
+        rendered: _RenderedReward,
+        *,
+        combo_delivery: MessageComboXpDelivery | None = None,
     ) -> bool:
         countdown_room = 40 if config.delete_after_seconds is not None else 0
         if config.response_type == "plain":
-            return len(rendered.content or "") <= (
-                MAX_MILESTONE_MESSAGE_LENGTH - countdown_room
-            )
+            content = self._with_combo_content(rendered.content or "", combo_delivery)
+            return len(content) <= (MAX_MILESTONE_MESSAGE_LENGTH - countdown_room)
         if rendered.content and len(rendered.content) > MAX_MILESTONE_MESSAGE_LENGTH:
             return False
         if rendered.embed_title and len(rendered.embed_title) > _EMBED_TITLE_LIMIT:
